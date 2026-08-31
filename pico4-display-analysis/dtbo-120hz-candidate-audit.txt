@@ -1,0 +1,23 @@
+PICO 4 Sharp LS026B3SA 120 Hz DTBO candidate audit
+
+Only target FDT properties:
+  qcom,dsi-supported-dfps-list: <90 72> -> <120 90 72>
+  qcom,mdss-dsi-max-refresh-rate: <90> -> <120>
+
+target_index: 5
+target_offset: 1312571
+baseline_target_size: 279294
+candidate_target_size: 279298
+baseline_dfps: [90, 72]
+candidate_dfps: [120, 90, 72]
+baseline_max_fps: [90]
+candidate_max_fps: [120]
+baseline_size: 25165824
+candidate_size: 25165824
+container_bytes_changed: 2056797
+first_changed_offset: 0x7
+last_changed_offset: 0x7fffe6
+baseline_sha256: 307e702182e731b76e8bc0a4aec131a53e1ddf82e96f2f416e2f49129e6d46ac
+candidate_sha256: df4e7b25d437464291ebbef0230e28ad3b6eaf6303866dc6ace7e1a52fa1bdf4
+
+This file has not been written to any device partition.

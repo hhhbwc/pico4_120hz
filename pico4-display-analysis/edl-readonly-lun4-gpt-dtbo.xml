@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<data>
+  <program SECTOR_SIZE_IN_BYTES="4096" filename="edl-lun4-gpt-header.bin" label="gpt_header" num_partition_sectors="6" physical_partition_number="4" start_sector="0" />
+  <program SECTOR_SIZE_IN_BYTES="4096" filename="edl-lun4-dtbo.bin" label="dtbo" num_partition_sectors="6144" physical_partition_number="4" start_sector="155466" />
+</data>

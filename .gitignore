@@ -1,0 +1,27 @@
+# Build outputs
+build/
+.gradle/
+.idea/
+*.iml
+local.properties
+captures/
+
+# Signing material
+*.jks
+*.keystore
+key.properties
+
+# Proprietary PICO firmware images are intentionally never committed.
+# See pico4-display-analysis/README.md for the reason and for the checksums.
+*.img
+*.bin
+*.apk
+*.elf
+*.mbn
+
+# Research checkouts
+.research/
+
+# OS noise
+Thumbs.db
+.DS_Store

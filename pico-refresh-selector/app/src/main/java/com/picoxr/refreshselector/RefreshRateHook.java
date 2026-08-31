@@ -1,0 +1,386 @@
+package com.picoxr.refreshselector;
+
+import android.app.Activity;
+import android.content.Context;
+import android.hardware.display.DisplayManager;
+import android.provider.Settings;
+import android.view.Display;
+import android.view.View;
+import android.widget.AdapterView;
+import android.widget.BaseAdapter;
+import android.widget.CompoundButton;
+
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.WeakHashMap;
+
+import de.robv.android.xposed.IXposedHookLoadPackage;
+import de.robv.android.xposed.XC_MethodHook;
+import de.robv.android.xposed.XposedBridge;
+import de.robv.android.xposed.XposedHelpers;
+import de.robv.android.xposed.callbacks.XC_LoadPackage;
+
+public final class RefreshRateHook implements IXposedHookLoadPackage {
+    private static final String TAG = "PicoRefreshSelector";
+    private static final String SETTINGS_PACKAGE = "com.picovr.settings";
+    private static final int REFRESH_SWITCH_ID = 0x7f0902c6;
+    private static final String CHOICE_KEY = "pico_refresh_selector_choice";
+    private static final int[] RATES = {72, 90, 120};
+
+    private static final ThreadLocal<Boolean> OPENING_REFRESH_MENU = new ThreadLocal<>();
+    private static final Map<Object, List<Integer>> REFRESH_LISTENERS =
+            Collections.synchronizedMap(new WeakHashMap<>());
+
+    @Override
+    public void handleLoadPackage(final XC_LoadPackage.LoadPackageParam lp) {
+        if (!SETTINGS_PACKAGE.equals(lp.packageName)) {
+            return;
+        }
+
+        try {
+            hookRefreshSwitch(lp.classLoader);
+            hookRefreshDropdown(lp.classLoader);
+            hookPopupBuilder(lp.classLoader);
+            hookPopupClick(lp.classLoader);
+            XposedBridge.log(TAG + ": installed native PICO refresh popup hooks");
+        } catch (Throwable error) {
+            XposedBridge.log(TAG + ": hook installation failed: " + error);
+        }
+    }
+
+    private static void hookRefreshSwitch(final ClassLoader loader) {
+        Class<?> fragment = XposedHelpers.findClass(
+                "com.picovr.fragments.PicolabFragment", loader);
+        XposedHelpers.findAndHookMethod(fragment, "onCheckedChanged",
+                CompoundButton.class, boolean.class, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        CompoundButton button = (CompoundButton) param.args[0];
+                        if (button.getId() != REFRESH_SWITCH_ID || !button.isPressed()) {
+                            return;
+                        }
+
+                        // The stock control is a SwitchView. Reuse its click as the anchor
+                        // for the same PopupMenuHelper surface used by power management.
+                        param.setResult(null);
+                        button.setChecked(currentRate(button.getContext()) != 72);
+                        OPENING_REFRESH_MENU.set(true);
+                        try {
+                            Method popupMethod = param.thisObject.getClass()
+                                    .getDeclaredMethod("T0", View.class);
+                            popupMethod.setAccessible(true);
+                            popupMethod.invoke(param.thisObject, button);
+                        } catch (Throwable error) {
+                            XposedBridge.log(TAG + ": failed to open native popup: " + error);
+                        } finally {
+                            OPENING_REFRESH_MENU.remove();
+                        }
+                    }
+                });
+    }
+
+    private static void hookRefreshDropdown(final ClassLoader loader) {
+        Class<?> fragment = XposedHelpers.findClass(
+                "com.picovr.fragments.PicolabFragment", loader);
+        XposedHelpers.findAndHookMethod(fragment, "onCreateView",
+                XposedHelpers.findClass("android.view.LayoutInflater", loader),
+                XposedHelpers.findClass("android.view.ViewGroup", loader),
+                XposedHelpers.findClass("android.os.Bundle", loader), new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        try {
+                            Object root = param.getResult();
+                            if (!(root instanceof View)) {
+                                return;
+                            }
+                            View switchView = ((View) root).findViewById(REFRESH_SWITCH_ID);
+                            if (switchView == null || !(switchView.getParent() instanceof android.view.ViewGroup)) {
+                                return;
+                            }
+                            android.view.ViewGroup parent = (android.view.ViewGroup) switchView.getParent();
+                            int index = parent.indexOfChild(switchView);
+                            android.view.ViewGroup.LayoutParams params = switchView.getLayoutParams();
+
+                            Class<?> dropdownClass = XposedHelpers.findClass(
+                                    "com.picovr.customviews.DropdownOptionView", loader);
+                            Constructor<?> constructor = dropdownClass.getConstructor(Context.class,
+                                    XposedHelpers.findClass("android.util.AttributeSet", loader));
+                            View dropdown = (View) constructor.newInstance(switchView.getContext(), null);
+                            dropdown.setId(REFRESH_SWITCH_ID);
+                            dropdown.setLayoutParams(params);
+                            dropdown.setOnClickListener(anchor -> {
+                                OPENING_REFRESH_MENU.set(true);
+                                try {
+                                    Method popupMethod = param.thisObject.getClass()
+                                            .getDeclaredMethod("T0", View.class);
+                                    popupMethod.setAccessible(true);
+                                    popupMethod.invoke(param.thisObject, anchor);
+                                } catch (Throwable error) {
+                                    XposedBridge.log(TAG + ": failed to open refresh popup: " + error);
+                                } finally {
+                                    OPENING_REFRESH_MENU.remove();
+                                }
+                            });
+                            parent.removeViewAt(index);
+                            parent.addView(dropdown, index);
+                            updateDropdownText(param.thisObject, currentRate(switchView.getContext()), loader);
+                        } catch (Throwable error) {
+                            XposedBridge.log(TAG + ": dropdown replacement failed: " + error);
+                        }
+                    }
+                });
+    }
+
+    private static void hookPopupBuilder(final ClassLoader loader) {
+        Class<?> helper = XposedHelpers.findClass(
+                "com.picovr.customviews.PopupMenuHelper", loader);
+        Class<?> listener = XposedHelpers.findClass(
+                "com.picovr.listener.SimpleOnItemClickListener", loader);
+
+        XposedHelpers.findAndHookMethod(helper, "c", Activity.class, View.class,
+                BaseAdapter.class, listener, int.class, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        if (!Boolean.TRUE.equals(OPENING_REFRESH_MENU.get())) {
+                            return;
+                        }
+
+                        try {
+                            BaseAdapter adapter = (BaseAdapter) param.args[2];
+                            List<Object> rows = findList(adapter);
+                            if (rows == null) {
+                                XposedBridge.log(TAG + ": native popup list not found");
+                                return;
+                            }
+
+                            Context context = (Context) param.args[0];
+                            List<Integer> rates = supportedRates(context);
+                            replaceRows(rows, rates, loader);
+                            param.args[4] = Math.max(0, rates.indexOf(currentRate(context)));
+                            REFRESH_LISTENERS.put(param.args[3], rates);
+                            adapter.notifyDataSetChanged();
+                            XposedBridge.log(TAG + ": injected native popup rates=" + rates);
+                        } catch (Throwable error) {
+                            XposedBridge.log(TAG + ": popup injection failed: " + error);
+                        }
+                    }
+                });
+    }
+
+    private static void hookPopupClick(final ClassLoader loader) {
+        Class<?> listener = XposedHelpers.findClass(
+                "com.picovr.fragments.PicolabFragment$3", loader);
+        XposedHelpers.findAndHookMethod(listener, "onItemClick", AdapterView.class,
+                View.class, int.class, long.class, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        List<Integer> rates = REFRESH_LISTENERS.remove(param.thisObject);
+                        if (rates == null) {
+                            return;
+                        }
+
+                        int position = (Integer) param.args[2];
+                        if (position < 0 || position >= rates.size()) {
+                            param.setResult(null);
+                            return;
+                        }
+
+                        int rate = rates.get(position);
+                        Object fragment = findOwningFragment(param.thisObject);
+                        View row = (View) param.args[1];
+                        int previous = row == null ? -1 : currentRate(row.getContext());
+                        param.setResult(null);
+                        applyRate(param.thisObject, rate, loader);
+                        if (fragment != null) {
+                            updateDropdownText(fragment, rate, loader);
+                            dismissPopup(fragment);
+                            if (rate != previous) {
+                                scheduleRestart(fragment);
+                            }
+                        }
+                    }
+                });
+    }
+
+    private static Object findOwningFragment(Object listener) {
+        for (Class<?> type = listener.getClass(); type != null; type = type.getSuperclass()) {
+            for (Field field : type.getDeclaredFields()) {
+                if (field.getType().getName().equals("com.picovr.fragments.PicolabFragment")) {
+                    try {
+                        field.setAccessible(true);
+                        return field.get(listener);
+                    } catch (Throwable ignored) {
+                        return null;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private static List<Integer> supportedRates(Context context) {
+        // The DTBO experiment proved 120 is present. Keep all three user-requested
+        // choices visible so 90 can be tested through the explicit vendor path.
+        ArrayList<Integer> rates = new ArrayList<>();
+        for (int rate : RATES) {
+            rates.add(rate);
+        }
+        return rates;
+    }
+
+    private static void replaceRows(List<Object> rows, List<Integer> rates, ClassLoader loader)
+            throws Exception {
+        Class<?> typeClass = XposedHelpers.findClass(
+                "com.bytedance.osui.popupmenu.MenuItemType", loader);
+        Class<?> dataClass = XposedHelpers.findClass(
+                "com.bytedance.osui.popupmenu.MenuItemData", loader);
+        Object checkType = Enum.valueOf((Class<? extends Enum>) typeClass, "TYPE_TITLE_CHECK");
+        Constructor<?> constructor = dataClass.getConstructor(typeClass);
+        Method setTitle = dataClass.getMethod("l", CharSequence.class);
+
+        rows.clear();
+        for (int rate : rates) {
+            Object item = constructor.newInstance(checkType);
+            setTitle.invoke(item, rate + " Hz");
+            rows.add(item);
+        }
+    }
+
+    private static List<Object> findList(Object object) throws IllegalAccessException {
+        for (Class<?> type = object.getClass(); type != null; type = type.getSuperclass()) {
+            for (Field field : type.getDeclaredFields()) {
+                if (List.class.isAssignableFrom(field.getType())) {
+                    field.setAccessible(true);
+                    Object value = field.get(object);
+                    if (value instanceof List) {
+                        return (List<Object>) value;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private static int currentRate(Context context) {
+        String type = getProperty("persist.pvr.display.type", "jdi49372");
+        if ("jdi493120".equalsIgnoreCase(type)) {
+            return 120;
+        }
+        if ("jdi49390".equalsIgnoreCase(type)) {
+            return 90;
+        }
+        int saved = Settings.Global.getInt(context.getContentResolver(), CHOICE_KEY, 72);
+        return saved == 90 || saved == 120 ? saved : 72;
+    }
+
+    private static void applyRate(Object listener, int rate, ClassLoader loader) {
+        try {
+            Context context = (Context) XposedHelpers.callStaticMethod(
+                    XposedHelpers.findClass("com.picovr.settings.SettingApplication", loader),
+                    "b");
+            Class<?> utils = XposedHelpers.findClass("com.picovr.utils.Utils", loader);
+            if (rate == 72) {
+                XposedHelpers.callStaticMethod(utils, "v1", false);
+            } else if (rate == 120) {
+                XposedHelpers.callStaticMethod(utils, "v1", true);
+            } else if (rate == 90) {
+                applyExplicit90(context, loader);
+            } else {
+                throw new IllegalArgumentException("Unsupported refresh rate: " + rate);
+            }
+
+            Settings.Global.putInt(context.getContentResolver(), CHOICE_KEY, rate);
+            XposedBridge.log(TAG + ": requested " + rate + " Hz");
+        } catch (Throwable error) {
+            XposedBridge.log(TAG + ": rate request failed: " + error);
+        }
+    }
+
+    // The stock refresh-rate switch only takes effect after the reboot that
+    // PicolabFragment.K0() schedules, so the selector has to do the same.
+    private static void scheduleRestart(Object fragment) {
+        try {
+            XposedHelpers.callMethod(fragment, "K0");
+            XposedBridge.log(TAG + ": scheduled vendor restart to apply refresh rate");
+        } catch (Throwable error) {
+            XposedBridge.log(TAG + ": restart request failed: " + error);
+        }
+    }
+    
+    private static void applyExplicit90(Context context, ClassLoader loader) throws Exception {
+        Class<?> commonUtils = XposedHelpers.findClass("com.pvr.common.CommonUtils", loader);
+        XposedHelpers.callStaticMethod(commonUtils, "setSystemProperties",
+                "persist.pvr.display.type", "jdi49390");
+
+        Class<?> config = XposedHelpers.findClass("com.picovr.utils.ConfigServiceManager", loader);
+        XposedHelpers.callStaticMethod(config, "i", "sdk_refreshRate", "90");
+        XposedHelpers.callStaticMethod(config, "i", "sdk_Recommand_refreshRate", "90");
+
+        XposedHelpers.callStaticMethod(
+                XposedHelpers.findClass("com.picovr.utils.Utils", loader),
+                "P0", "persist.pvr.display.type", 90);
+        XposedHelpers.callStaticMethod(
+                XposedHelpers.findClass("com.picovr.utils.Utils", loader),
+                "B0", "com.pvr.display.type", 90);
+        XposedHelpers.callStaticMethod(
+                XposedHelpers.findClass("com.picovr.utils.Utils", loader), "w1", 30);
+    }
+
+    private static void dismissPopup(Object fragment) {
+        try {
+            Class<?> type = fragment.getClass();
+            Field popupField = null;
+            while (type != null && popupField == null) {
+                try {
+                    popupField = type.getDeclaredField("g");
+                } catch (NoSuchFieldException ignored) {
+                    type = type.getSuperclass();
+                }
+            }
+            if (popupField == null) return;
+            popupField.setAccessible(true);
+            Object popup = popupField.get(fragment);
+            if (popup instanceof android.widget.PopupWindow) {
+                ((android.widget.PopupWindow) popup).dismiss();
+            } else if (popup != null) {
+                XposedHelpers.callMethod(popup, "dismiss");
+            }
+            XposedBridge.log(TAG + ": dismissed refresh popup");
+        } catch (Throwable error) {
+            XposedBridge.log(TAG + ": popup dismissal failed: " + error);
+        }
+    }
+
+    private static void updateDropdownText(Object fragment, int rate, ClassLoader loader) {
+        try {
+            Field rootField = fragment.getClass().getDeclaredField("l");
+            rootField.setAccessible(true);
+            Object root = rootField.get(fragment);
+            if (!(root instanceof View)) {
+                return;
+            }
+            View dropdown = ((View) root).findViewById(REFRESH_SWITCH_ID);
+            if (dropdown == null) {
+                return;
+            }
+            XposedHelpers.callMethod(dropdown, "setText", rate + " Hz");
+        } catch (Throwable error) {
+            XposedBridge.log(TAG + ": dropdown label update failed: " + error);
+        }
+    }
+
+    private static String getProperty(String key, String fallback) {
+        try {
+            Class<?> properties = Class.forName("android.os.SystemProperties");
+            Method get = properties.getMethod("get", String.class, String.class);
+            return (String) get.invoke(null, key, fallback);
+        } catch (Throwable error) {
+            return fallback;
+        }
+    }
+}
