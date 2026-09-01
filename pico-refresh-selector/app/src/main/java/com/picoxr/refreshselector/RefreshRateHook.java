@@ -3,6 +3,8 @@ package com.picoxr.refreshselector;
 import android.app.Activity;
 import android.content.Context;
 import android.hardware.display.DisplayManager;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 import android.view.Display;
 import android.view.View;
@@ -19,6 +21,10 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
@@ -46,6 +52,12 @@ public final class RefreshRateHook implements IXposedHookLoadPackage {
     private static final ThreadLocal<Boolean> OPENING_REFRESH_MENU = new ThreadLocal<>();
     private static final Map<Object, List<Integer>> REFRESH_LISTENERS =
             Collections.synchronizedMap(new WeakHashMap<>());
+    private static final ScheduledExecutorService PIN_EXECUTOR =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread thread = new Thread(r, "PicoRefreshPin");
+                thread.setDaemon(true);
+                return thread;
+            });
 
     @Override
     public void handleLoadPackage(final XC_LoadPackage.LoadPackageParam lp) {
@@ -153,11 +165,38 @@ public final class RefreshRateHook implements IXposedHookLoadPackage {
                 XposedBridge.log(TAG + ": " + rate + " Hz already active");
                 return;
             }
+            // Pinning alone is not enough. Something re-asserts the allowed set
+            // about half a second later and the panel drops back, so the vendor
+            // state has to name the same rate before the pin is applied.
             XposedBridge.log(TAG + ": restoring stored choice " + rate + " Hz");
+            applyVendorRate(context, rate, loader);
             pinDisplayConfig(context, rate);
+            // DisplayModeDirector publishes its default vote asynchronously and
+            // can overwrite the first pin roughly 0.6 s after Settings starts.
+            // Re-assert a few times so the vendor's chosen config wins without a
+            // device reboot. Each attempt is harmless if the pin already holds.
+            schedulePinRetries(context, rate);
+
         } catch (Throwable error) {
             XposedBridge.log(TAG + ": restore failed: " + error);
         }
+    }
+
+    private static void schedulePinRetries(final Context context, final int rate) {
+        PIN_EXECUTOR.scheduleAtFixedRate(new Runnable() {
+            private int attempts;
+
+            @Override
+            public void run() {
+                if (++attempts > 10
+                        || Settings.Global.getInt(context.getContentResolver(), CHOICE_KEY, 0) != rate) {
+                    throw new CancellationException();
+                }
+                boolean pinned = pinDisplayConfig(context, rate);
+                XposedBridge.log(TAG + ": delayed pin attempt " + attempts
+                        + " for " + rate + " Hz, pinned=" + pinned);
+            }
+        }, 700L, 700L, TimeUnit.MILLISECONDS);
     }
 
     private static void logConfigValue(ClassLoader loader, String key) {
@@ -317,7 +356,13 @@ public final class RefreshRateHook implements IXposedHookLoadPackage {
                         if (fragment != null) {
                             updateDropdownText(fragment, rate, loader);
                             dismissPopup(fragment);
-                            if (rate != previous && !live) {
+                            if (live) {
+                                View anchor = row;
+                                Context context = anchor == null ? null : anchor.getContext();
+                                if (context != null) {
+                                    schedulePinRetries(context, rate);
+                                }
+                            } else if (rate != previous) {
                                 Context context = row == null ? null : row.getContext();
                                 if (context != null && autoRestartEnabled(context)) {
                                     scheduleRestart(fragment);
@@ -348,19 +393,13 @@ public final class RefreshRateHook implements IXposedHookLoadPackage {
     }
 
     private static List<Integer> supportedRates(Context context) {
-        // Only offer rates that exist as a real display config. 90 Hz appears in
-        // the DTBO DFPS list, but the driver never registers it as its own mode
-        // ("Invalid new_hfp calcluated-499"), so listing it would just fall back
-        // to 72 Hz.
         ArrayList<Integer> rates = new ArrayList<>();
         for (int rate : RATES) {
             if (configIndexForRate(context, rate) != null) {
                 rates.add(rate);
             }
         }
-        if (rates.isEmpty()) {
-            rates.add(72);
-        }
+        if (rates.isEmpty()) rates.add(72);
         return rates;
     }
 
