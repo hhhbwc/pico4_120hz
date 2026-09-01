@@ -10,11 +10,11 @@
 
 > **当前状态 / Current status / Текущий статус**
 >
-> **最终实测：120 Hz 尚未实现。**候选 DTBO 可以让内核枚举并尝试 120 Hz，但所有候选都会出现黑屏或底部花屏；已恢复原厂 DTBO。当前设备稳定运行原生 72/90 Hz。原因不是简单的 DFPS 列表，而是 LS026B3SA 缺少经过验证的完整 120 Hz timing、bit clock、PHY、DSC/TCON 配套配置，详见[失败分析](#51-失败分析)。
+> **最终实测：120 Hz 尚未实现。**候选 DTBO 可以让内核枚举并尝试 120 Hz，但所有候选都会出现黑屏或底部花屏；已恢复原厂 DTBO。当前设备稳定运行原生 72/90 Hz。原因不是简单的 DFPS 列表，而是 LS026B3SA 缺少经过验证的完整 120 Hz timing、bit clock、PHY、DSC/TCON 配套配置，详见[失败分析](#52-失败分析)。
 >
-> **Final measurement: 120 Hz is not implemented yet.** Candidate DTBOs made the kernel enumerate and attempt 120 Hz, but every candidate produced a black screen or a corrupted band at the bottom; the stock DTBO has been restored. The device is currently stable at stock 72/90 Hz. The blocker is not just the DFPS list: LS026B3SA lacks a vendor-validated complete 120 Hz timing, bit clock, PHY and DSC/TCON configuration. See [failure analysis](#51-failure-analysis).
+> **Final measurement: 120 Hz is not implemented yet.** Candidate DTBOs made the kernel enumerate and attempt 120 Hz, but every candidate produced a black screen or a corrupted band at the bottom; the stock DTBO has been restored. The device is currently stable at stock 72/90 Hz. The blocker is not just the DFPS list: LS026B3SA lacks a vendor-validated complete 120 Hz timing, bit clock, PHY and DSC/TCON configuration. See [failure analysis](#52-failure-analysis).
 >
-> **Итоговый замер: 120 Гц пока не реализованы.** Кандидаты DTBO заставляли ядро перечислять и пробовать 120 Гц, но каждый вариант давал чёрный экран или искажённую полосу снизу; исходный DTBO восстановлен. Сейчас устройство стабильно работает на штатных 72/90 Гц. Проблема не только в списке DFPS: для LS026B3SA нет проверенной полной конфигурации 120 Гц — timing, bit clock, PHY и DSC/TCON. См. [анализ неудачи](#51-анализ-неудачи).
+> **Итоговый замер: 120 Гц пока не реализованы.** Кандидаты DTBO заставляли ядро перечислять и пробовать 120 Гц, но каждый вариант давал чёрный экран или искажённую полосу снизу; исходный DTBO восстановлен. Сейчас устройство стабильно работает на штатных 72/90 Гц. Проблема не только в списке DFPS: для LS026B3SA нет проверенной полной конфигурации 120 Гц — timing, bit clock, PHY и DSC/TCON. См. [анализ неудачи](#52-анализ-неудачи).
 
 ---
 
@@ -178,7 +178,7 @@ Utils.x1(enable);                             // 更新录屏帧率
 
 两个关键结论：
 
-1. 本机 `Utils.s1()` 实测返回 **`false`**（`ro.pvr.product.name` 是 `Phoenix`，不是 `FalconCV3`），所以原生开关只能在 72 与 **90** 之间切换，`Utils.v1(true)` 写入的是 `jdi49390`。**不能**用 `v1(true)` 来请求 120，否则实际写下去的是 90。本项目因此对三档都走显式 vendor 写入，并把 `s1()` hook 成 `true`，让 PICO 自己的界面文案与 DTBO 现在枚举出的 120 Hz 保持一致。
+1. 本机 `Utils.s1()` 实测返回 **`false`**（`ro.pvr.product.name` 是 `Phoenix`，不是 `FalconCV3`），所以原生开关只能在 72 与 **90** 之间切换，`Utils.v1(true)` 写入的是 `jdi49390`。**不能**用 `v1(true)` 来请求 120，否则实际写下去的是 90。120 相关路径仅用于实验，当前未启用。本项目早期曾对三档都走显式 vendor 写入并把 `s1()` hook 成 `true`，但后续实测确认 120 Hz 候选会黑屏/花屏；当前原厂 DTBO 下只保留真实 72/90 两档，120 相关逻辑不应视为可用。
 2. **原生流程本身就要重启设备**。`K0()` 就是 `restartDevice`，不重启不会生效。
 
 
@@ -269,6 +269,21 @@ dsi_phy_hw_v4_0_calc_clk_zero / calc_clk_trail_rec_min / calc_hs_zero / calc_hs_
 
 刷入前请确保 USB 线可用。注意这台设备虽然 `ro.boot.flash.locked=0`，但**fastboot 的 `flash` 命令被禁用**——能进 fastboot 却刷不了分区，唯一可用的离线刷写途径是 **EDL(9008)**。所以只要 ADB 还在就用 `dd` 回滚，`dtbobak` 全程保持原样作为第二道保险。刷入后用 `pico4-display-analysis/verify_refresh_rate.sh` 判断真实刷新率，不要看 dumpsys。
 
+### 2.7 公开面板资料与可信度
+
+公开资料能确认 `LS026B3SA` 系列的基础硬件信息，但没有找到 Sharp 官方 datasheet、DSC PPS、PHY 时序或 TCON 初始化表。
+
+- [Panelook LS026B3SA01X](https://www.panelook.com/LS026B3SA01X_Sharp_2.6_LCM_overview_64156.html)：搜索摘要显示 Sharp、2.6 英寸、2160×2160、MIPI、2 channels、4 data lanes，并标注 120 Hz。
+- [Panelook LS026B3SA01Y](https://www.panelook.com/LS026B3SA01Y_Sharp_2.6_LCM_overview_64157.html)：同系列的 Y 子型号，摘要也显示 2160×2160、MIPI、2 channels、4 data lanes、120 Hz。
+- [MyDoPoint LS026B3SA01X](https://www.mydopoint.com/lcd_LS026B3SA01X.html)：列出 Sharp、2.6 英寸、2160×2160、520 cd/m²、650:1、MIPI、WLED。
+- [JianXiang LS026B3SA 系列](https://www.jxg.tw/en/product_1569517.html)：将 LS026B3SA01/A/B/X 列为面向 PICO、Meta/Oculus 等 VR 设备的 Sharp 面板系列。
+- [PICO 4 官方规格](https://www.picoxr.com/global/products/pico4/specs)：确认 PICO 4 使用两块 2.56 英寸 Fast-LCD，每眼 2160×2160，官方刷新率为 72/90 Hz。
+- [PICO 4 官方产品页](https://www.picoxr.com/global/products/pico4)：同样把 PICO 4 的最高刷新率列为 90 Hz。
+- [52audio PICO 4 拆解](https://www.52audio.com/archives/150653.html)：确认两块 2.56 英寸、4320×2160、90 Hz Fast-LCD，但没有给出面板型号或 TCON。
+- [NT57900 经销商页面](https://www.displayamoled.com/sale-53602352-2-56-inch-vr-lcd-display-2160x2160-45-pins-mipi-interface-driving-ic-nt57900.html)：页面对应的是 ESHX026C4T-NH0，不是明确的 LS026B3SA01X，因此只能证明 NT57900 出现在相似 VR 面板中，不能证明它就是本机的 TCON 配置来源。
+
+Panelook 页面本身会触发滑块验证，上述 Panelook 参数来自搜索摘要，可靠性低于可直接访问的原始 datasheet。当前实机 DTBO 和内核证据优先级更高：本机原厂节点明确是 `sharp ls026b3sa 90hz video mode dsi panel`，真实模式为 72/90。
+
 ## 3. 模块做了什么
 
 模块包名 `com.picoxr.refreshselector`，作用域**仅** `com.picovr.settings`。
@@ -340,9 +355,9 @@ PxrCompositor: setRefreshRate:120.000000, current rate: 120.000000
 
 ## 5. 已知限制
 
-**候选 DTBO 目前是净损失，建议刷回原始 DTBO。**把 DFPS 列表改成 `<120 90 72>` 之后，DRM 实际登记的是 `{120(假), 72}`——原厂真实可用的 90 Hz 反而消失了。原始 DTBO 的列表是 `<90 72>`、`max-refresh-rate = 90`，两档都是有效时序。所以想要真正的高刷，正确做法是刷回原始 DTBO，用 72/90 两档。
+**候选 DTBO 已全部回滚，当前使用原始 DTBO。**原始 DTBO 的列表是 `<90 72>`，`max-refresh-rate = 90`，两档都是真实有效时序；所有 120 Hz 候选都已通过有线 ADB 回滚，不建议继续在设备上盲写。
 
-**90 Hz 是这块面板的原生档位。**面板名就叫 `sharp ls026b3sa 90hz video mode dsi panel`，`panel-framerate = 90`，DFPS 基准也是 90。它不需要任何时序改动，是三档里最容易拿到的一档。配合已经验证的魔数 `3`，可以做到 72↔90 运行时即时切换，不用重启——这比原厂那个必须重启的开关更好用。
+**90 Hz 是这块面板的原生档位。**面板名就叫 `sharp ls026b3sa 90hz video mode dsi panel`，`panel-framerate = 90`，DFPS 基准也是 90。它不需要时序改动。魔数 `3` 可以让 SurfaceFlinger 接受 90 Hz 配置，但实测 PICO 的系统服务随后会重新投票回 72 Hz，因此 72↔90 的稳定免重启切换尚未完成。
 
 **120 Hz 完整时序候选已经写过并测试失败。**按 2.2 的推算，120 Hz 要求：
 
@@ -493,12 +508,13 @@ docs/
 - [x] 定位面板节点与 DFPS 属性，构建候选 DTBO
 - [x] 验证 EDL 回读与回滚路径
 - [x] 让 120 Hz 被 DRM 与 Android 枚举
-- [x] 复用 PICO 原生下拉菜单实现三档选择
+- [x] 复用 PICO 原生下拉菜单实现 72/90 两档选择
 - [x] 定位原生流程依赖重启的事实
 - [x] 通过配置服务写入 `sdk_refreshRate`，让厂商状态跨重启保持
 - [x] 逆向出 SurfaceFlinger 私有校验（魔数 `3`），拿到运行时改配置的能力
 - [x] 用内核日志证伪「120 Hz 已生效」，定位 DFPS 只能降频的根本限制
-- [ ] 刷回原始 DTBO，验证 72↔90 运行时即时切换
+- [x] 刷回原始 DTBO，确认真实 72/90 模式恢复
+- [ ] 在原始 DTBO 上完成 72↔90 运行时即时切换的稳定性验证
 - [ ] 扩展到 `system_server` 修正 `DisplayModeDirector`，做到开机自动生效
 - [ ] 为 120 Hz 新写一份 `timing@1`（porch + clockrate + phy-timings）
 - [ ] 提供 Magisk 模块形式的一键安装
@@ -670,7 +686,7 @@ Utils.x1(enable);                             // updates recording fps
 
 Two important conclusions:
 
-1. `Utils.s1()` was measured to return **`false`** on this unit (`ro.pvr.product.name` is `Phoenix`, not `FalconCV3`), so the stock switch only toggles between 72 and **90**, and `Utils.v1(true)` writes `jdi49390`. `v1(true)` therefore **cannot** be used to request 120 — it silently writes 90. This project writes all three rates explicitly and hooks `s1()` to `true` so PICO's own UI strings match the 120 Hz the DTBO now enumerates.
+1. `Utils.s1()` was measured to return **`false`** on this unit (`ro.pvr.product.name` is `Phoenix`, not `FalconCV3`), so the stock switch only toggles between 72 and **90**, and `Utils.v1(true)` writes `jdi49390`. `v1(true)` therefore **cannot** be used to request 120 — it silently writes 90. Earlier builds wrote all three rates explicitly and hooked `s1()` to `true`, but later testing showed that every 120 Hz candidate produced a black screen or corruption. The stock DTBO now exposes only genuine 72/90 configs, and 120 is experimental and disabled.
 2. **The stock flow itself reboots the device.** `K0()` is `restartDevice`; without a reboot nothing takes effect.
 
 
@@ -761,6 +777,21 @@ Safety check: this node's `__local_fixups__` only references the phandle propert
 
 Have a USB cable available before flashing. Note that although this device reports `ro.boot.flash.locked=0`, **its fastboot has the `flash` command disabled** — fastboot can be entered but cannot write a partition, so the only usable offline path is **EDL (9008)**. Roll back with `dd` while ADB is alive, and `dtbobak` stays untouched throughout as a second safety net. After flashing, judge the real rate with `pico4-display-analysis/verify_refresh_rate.sh` rather than dumpsys.
 
+### 2.7 Public panel sources and confidence
+
+Public sources confirm the basic hardware information for the `LS026B3SA` family, but no Sharp datasheet, DSC PPS, PHY timing table or TCON initialization table was found.
+
+- [Panelook LS026B3SA01X](https://www.panelook.com/LS026B3SA01X_Sharp_2.6_LCM_overview_64156.html): search results identify Sharp, 2.6-inch, 2160x2160, MIPI, 2 channels, 4 data lanes and list 120 Hz.
+- [Panelook LS026B3SA01Y](https://www.panelook.com/LS026B3SA01Y_Sharp_2.6_LCM_overview_64157.html): the Y variant is similarly summarized as 2160x2160, MIPI, 2 channels, 4 data lanes and 120 Hz.
+- [MyDoPoint LS026B3SA01X](https://www.mydopoint.com/lcd_LS026B3SA01X.html): lists Sharp, 2.6-inch, 2160x2160, 520 cd/m2, 650:1, MIPI and WLED.
+- [JianXiang LS026B3SA family](https://www.jxg.tw/en/product_1569517.html): lists LS026B3SA01/A/B/X as a Sharp VR panel family for PICO, Meta/Oculus and similar devices.
+- [Official PICO 4 specifications](https://www.picoxr.com/global/products/pico4/specs): confirms two 2.56-inch Fast-LCD panels, 2160x2160 per eye and official 72/90 Hz modes.
+- [Official PICO 4 product page](https://www.picoxr.com/global/products/pico4): also lists 90 Hz as the maximum refresh rate.
+- [52audio PICO 4 teardown](https://www.52audio.com/archives/150653.html): confirms two 2.56-inch, 4320x2160, 90 Hz Fast-LCD panels, but not the panel model or TCON.
+- [NT57900 reseller page](https://www.displayamoled.com/sale-53602352-2-56-inch-vr-lcd-display-2160x2160-45-pins-mipi-interface-driving-ic-nt57900.html): describes ESHX026C4T-NH0, not an identified LS026B3SA01X, so it only proves that NT57900 appears in a similar VR panel and does not prove the TCON configuration in this device.
+
+The Panelook pages are protected by a slider; those parameters come from search snippets and have lower confidence than a primary datasheet. Device DTBO and kernel evidence takes priority: this unit's stock node is explicitly `sharp ls026b3sa 90hz video mode dsi panel`, with real 72/90 modes.
+
 ## 3. What the module does
 
 Package `com.picoxr.refreshselector`, scoped to `com.picovr.settings` **only**.
@@ -832,9 +863,9 @@ PxrCompositor: setRefreshRate:120.000000, current rate: 120.000000
 
 ## 5. Known limitations
 
-**The candidate DTBO is a net loss right now; flashing the stock DTBO back is recommended.** After changing the DFPS list to `<120 90 72>`, DRM actually registers `{120 (bogus), 72}` — the genuine 90 Hz the stock firmware had is gone. The stock DTBO lists `<90 72>` with `max-refresh-rate = 90`, and both are valid timings. So the correct way to get a higher rate today is to restore the stock DTBO and use 72/90.
+**All candidate DTBOs have been rolled back; the stock DTBO is active.** The stock DTBO lists `<90 72>` with `max-refresh-rate = 90`, and both are genuine valid timings. Every 120 Hz candidate was rolled back through wired ADB; further blind partition writes are not recommended.
 
-**90 Hz is this panel's native rate.** The panel is literally named `sharp ls026b3sa 90hz video mode dsi panel`, `panel-framerate = 90`, and the DFPS base is 90. It needs no timing work at all and is the easiest of the three. Combined with the verified marker `3`, 72↔90 can be switched live with no reboot — better than the stock toggle, which always rebooted.
+**90 Hz is this panel's native rate.** The panel is literally named `sharp ls026b3sa 90hz video mode dsi panel`, `panel-framerate = 90`, and the DFPS base is 90. It needs no timing work. The marker `3` makes SurfaceFlinger accept the 90 Hz config, but testing shows that a later PICO system-service vote returns it to 72 Hz, so stable reboot-free 72<->90 switching is not complete.
 
 **A complete 120 Hz timing candidate was authored and tested, but failed.** Following the arithmetic in 2.2, 120 Hz requires:
 
@@ -977,12 +1008,13 @@ docs/
 - [x] Locate the panel node and DFPS properties, build a candidate DTBO
 - [x] Verify EDL read-back and rollback
 - [x] Get 120 Hz enumerated by DRM and Android
-- [x] Reuse PICO's native dropdown for a three-way choice
+- [x] Reuse PICO's native dropdown for the real 72/90 choices
 - [x] Establish that the stock flow depends on a reboot
 - [x] Write `sdk_refreshRate` through the configuration service so the vendor state survives a reboot
 - [x] Reverse SurfaceFlinger's private check (marker `3`) and gain runtime config control
 - [x] Disprove "120 Hz works" from the kernel log and pin down the DFPS lower-only limit
-- [ ] Restore the stock DTBO and verify live 72<->90 switching
+- [x] Restore the stock DTBO and confirm genuine 72/90 modes
+- [ ] Verify stable live 72<->90 switching on the stock DTBO
 - [ ] Extend into `system_server` to fix `DisplayModeDirector` and apply the rate at boot
 - [ ] Author a `timing@1` for 120 Hz (porches + clockrate + phy-timings)
 - [ ] Ship a Magisk module for one-step installation
@@ -1245,6 +1277,21 @@ dsi_phy_hw_v4_0_calc_clk_zero / calc_clk_trail_rec_min / calc_hs_zero / calc_hs_
 
 Перед прошивкой держите наготове USB-кабель. Учтите: хотя устройство сообщает `ro.boot.flash.locked=0`, **в его fastboot отключена команда `flash`** — войти можно, но записать раздел нельзя, поэтому единственный рабочий офлайн-путь — **EDL (9008)**. Пока ADB работает, откатывайтесь через `dd`; `dtbobak` всё время остаётся нетронутым как вторая страховка. После прошивки определяйте реальную частоту с помощью `pico4-display-analysis/verify_refresh_rate.sh`, а не dumpsys.
 
+### 2.7 Открытые источники по панели и степень доверия
+
+Открытые источники подтверждают базовые характеристики семейства `LS026B3SA`, но найти официальный datasheet Sharp, DSC PPS, таблицу таймингов PHY или таблицу инициализации TCON не удалось.
+
+- [Panelook LS026B3SA01X](https://www.panelook.com/LS026B3SA01X_Sharp_2.6_LCM_overview_64156.html): в поисковом описании указаны Sharp, 2,6 дюйма, 2160x2160, MIPI, 2 канала, 4 линии данных и 120 Гц.
+- [Panelook LS026B3SA01Y](https://www.panelook.com/LS026B3SA01Y_Sharp_2.6_LCM_overview_64157.html): вариант Y с аналогичным описанием — 2160x2160, MIPI, 2 канала, 4 линии данных, 120 Гц.
+- [MyDoPoint LS026B3SA01X](https://www.mydopoint.com/lcd_LS026B3SA01X.html): Sharp, 2,6 дюйма, 2160x2160, 520 кд/м², 650:1, MIPI и WLED.
+- [Каталог JianXiang LS026B3SA](https://www.jxg.tw/en/product_1569517.html): перечисляет LS026B3SA01/A/B/X как семейство VR-панелей Sharp для PICO, Meta/Oculus и похожих устройств.
+- [Официальные характеристики PICO 4](https://www.picoxr.com/global/products/pico4/specs): две Fast-LCD панели 2,56 дюйма, 2160x2160 на глаз и официальные режимы 72/90 Гц.
+- [Официальная страница PICO 4](https://www.picoxr.com/global/products/pico4): также указывает 90 Гц как максимальную частоту.
+- [Разбор PICO 4 от 52audio](https://www.52audio.com/archives/150653.html): подтверждает две Fast-LCD панели 2,56 дюйма, 4320x2160 и 90 Гц, но не сообщает модель панели или TCON.
+- [Страница продавца NT57900](https://www.displayamoled.com/sale-53602352-2-56-inch-vr-lcd-display-2160x2160-45-pins-mipi-interface-driving-ic-nt57900.html): описывает ESHX026C4T-NH0, а не точно идентифицированную LS026B3SA01X; это не доказательство конфигурации TCON данного устройства.
+
+Страницы Panelook защищены слайдером, поэтому их параметры получены из поисковых описаний и имеют меньшую надёжность, чем данные первичного datasheet. Приоритет имеют DTBO и ядро устройства: штатный узел прямо называется `sharp ls026b3sa 90hz video mode dsi panel`, а реальные режимы — 72/90 Гц.
+
 ## 3. Что делает модуль
 
 Пакет `com.picoxr.refreshselector`, область действия — **только** `com.picovr.settings`.
@@ -1316,9 +1363,9 @@ PxrCompositor: setRefreshRate:120.000000, current rate: 120.000000
 
 ## 5. Известные ограничения
 
-**Кандидат DTBO сейчас даёт чистый проигрыш; рекомендуется вернуть исходный DTBO.** После замены списка DFPS на `<120 90 72>` DRM регистрирует `{120 (фиктивные), 72}` — реальные 90 Гц из заводской прошивки пропадают. В исходном DTBO список `<90 72>` и `max-refresh-rate = 90`, и оба тайминга корректны. Поэтому сегодня правильный путь к повышенной частоте — вернуть исходный DTBO и использовать 72/90.
+**Все кандидаты DTBO откатаны; активен исходный DTBO.** В исходном DTBO список `<90 72>`, `max-refresh-rate = 90`, и оба режима являются настоящими корректными таймингами. Все кандидаты 120 Гц были откатаны через проводной ADB; дальнейшая слепая запись в раздел не рекомендуется.
 
-**90 Гц — родная частота этой панели.** Панель так и называется: `sharp ls026b3sa 90hz video mode dsi panel`, `panel-framerate = 90`, база DFPS тоже 90. Ей не нужны никакие правки таймингов, это самый простой из трёх вариантов. Вместе с подтверждённым маркером `3` переключение 72↔90 работает на ходу без перезагрузки — удобнее заводского переключателя, который всегда перезагружал устройство.
+**90 Гц — родная частота этой панели.** Панель так и называется: `sharp ls026b3sa 90hz video mode dsi panel`, `panel-framerate = 90`, база DFPS тоже 90. Правки таймингов не нужны. Маркер `3` заставляет SurfaceFlinger принять конфигурацию 90 Гц, но проверка показала, что последующий голос системной службы PICO возвращает 72 Гц, поэтому стабильное переключение 72↔90 без перезагрузки ещё не завершено.
 
 **Полный кандидат тайминга 120 Гц был создан и проверен, но не сработал.** По расчёту из 2.2 для 120 Гц нужно:
 
@@ -1461,12 +1508,13 @@ docs/
 - [x] Найти узел панели и свойства DFPS, собрать кандидат DTBO
 - [x] Проверить считывание через EDL и откат
 - [x] Добиться перечисления 120 Гц в DRM и Android
-- [x] Переиспользовать нативное меню PICO для выбора из трёх значений
+- [x] Переиспользовать нативное меню PICO для реальных значений 72/90
 - [x] Установить, что штатный сценарий требует перезагрузки
 - [x] Записывать `sdk_refreshRate` через службу конфигурации, чтобы вендорное состояние переживало перезагрузку
 - [x] Разобрать приватную проверку SurfaceFlinger (маркер `3`) и получить контроль над конфигурацией во время работы
 - [x] Опровергнуть «120 Гц работают» по журналу ядра и установить, что DFPS умеет только понижать частоту
-- [ ] Вернуть исходный DTBO и проверить переключение 72<->90 на ходу
+- [x] Вернуть исходный DTBO и подтвердить реальные режимы 72/90
+- [ ] Проверить стабильное переключение 72<->90 на ходу на исходном DTBO
 - [ ] Расширить хук на `system_server`, починить `DisplayModeDirector` и применять частоту при загрузке
 - [ ] Написать `timing@1` для 120 Гц (porch + clockrate + phy-timings)
 - [ ] Выпустить модуль Magisk для установки в один шаг
