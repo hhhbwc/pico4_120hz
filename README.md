@@ -236,6 +236,39 @@ SurfaceControl.setAllowedDisplayConfigs(token, new int[] {configIndex, 3});
 
 日志里那句 `no pico parameter so allow to change display config through surfaceflinger` 措辞有误，实际含义是**不放行**。
 
+### 2.6 把基准时序挪到 120 Hz（已构建，尚未刷入）
+
+既然 DFPS 只能降频，唯一的出路就是让默认时序本身变成 120 Hz，再让 90 与 72 从它推导出来——这正是 PICO 自己 `*_493_120_new_video` 节点的结构。
+
+`build_120hz_base_dtbo.py` 只做三处原地改动，镜像尺寸不变，全镜像仅 20 字节差异：
+
+```
+qcom,mdss-dsi-panel-framerate    90 -> 120
+qcom,mdss-dsi-v-front-porch      57 -> 14
+qcom,mdss-dsi-panel-phy-timings  用 FDT_NOP 覆盖（合法 FDT，解析器跳过）
+```
+
+PHY 时序是删掉而不是手算的。DT 里那 14 字节属于旧的 993 MHz 位时钟，新时钟下必然不对；这块 SoC 用的是 DSI PHY v4.0，14 字节正是它的时序表长度。删掉之后驱动会自己算，`/proc/kallsyms` 证实这个内核带着计算器和对应的 v4.0 算子：
+
+```
+dsi_phy_hw_calculate_timing_params
+dsi_phy_hw_v4_0_calc_clk_zero / calc_clk_trail_rec_min / calc_hs_zero / calc_hs_trail
+```
+
+算术依据不是猜的，压缩后 htotal 取自运行中的 DSI 控制器寄存器 `DSI_VIDEO_MODE_TOTAL = 0x0adc033a`，即 htotal−1 = 0x033a、vtotal−1 = 0x0adc：
+
+| 档位 | vtotal | vfp | 来源 |
+| --- | --- | --- | --- |
+| 120 Hz | 2182 | 14 | 基准 |
+| 90 Hz | 2909 | 741 | DFPS 推导 |
+| 72 Hz | 3636 | 1468 | DFPS 推导 |
+
+三档都落在正的前肩上。像素时钟 216,541,680 Hz（现为 165,591,864，+30.8%），位时钟约 1.30 GHz（现为 993.5 MHz），在 SM8250 D-PHY 的范围内。
+
+安全性检查：该节点的 `__local_fixups__` 只引用 `io-channels` 与 `qcom,panel-supply-entries` 两个 phandle 属性，都没被碰到，因此覆盖 PHY 时序不会破坏 overlay 的 phandle 修正。
+
+**尚未刷入。**位时钟上调三成在这块面板上没有验证过；PHY 时序算错或面板吃不下更高链路速率都会导致花屏或黑屏。刷入前请确保 USB 线可用，`dtbobak` 全程保持原样。
+
 ## 3. 模块做了什么
 
 模块包名 `com.picoxr.refreshselector`，作用域**仅** `com.picovr.settings`。
@@ -670,6 +703,39 @@ SurfaceControl.setAllowedDisplayConfigs(token, new int[] {configIndex, 3});
 
 The log line `no pico parameter so allow to change display config through surfaceflinger` is worded backwards: that branch is the one that refuses.
 
+### 2.6 Moving the base timing to 120 Hz (built, not flashed)
+
+Since DFPS can only lower the rate, the only way forward is to make the default timing itself 120 Hz and let 90 and 72 be derived from it — which is exactly how PICO's own `*_493_120_new_video` nodes are arranged.
+
+`build_120hz_base_dtbo.py` makes three in-place edits, so the image keeps its exact size and only 20 bytes differ in the whole partition:
+
+```
+qcom,mdss-dsi-panel-framerate    90 -> 120
+qcom,mdss-dsi-v-front-porch      57 -> 14
+qcom,mdss-dsi-panel-phy-timings  overwritten with FDT_NOP words (legal FDT, parsers skip them)
+```
+
+The PHY timings are dropped rather than recomputed by hand. The 14 bytes in the DT belong to the old 993 MHz bit clock and cannot be right at the new one; this SoC uses DSI PHY v4.0, for which 14 bytes is exactly the timing table size. With the property gone the driver computes them, and `/proc/kallsyms` confirms this kernel carries both the calculator and the matching v4.0 ops:
+
+```
+dsi_phy_hw_calculate_timing_params
+dsi_phy_hw_v4_0_calc_clk_zero / calc_clk_trail_rec_min / calc_hs_zero / calc_hs_trail
+```
+
+The arithmetic is not guesswork: the compressed horizontal total comes from the live DSI controller, where `DSI_VIDEO_MODE_TOTAL = 0x0adc033a`, so htotal−1 = 0x033a and vtotal−1 = 0x0adc.
+
+| Rate | vtotal | vfp | Source |
+| --- | --- | --- | --- |
+| 120 Hz | 2182 | 14 | base |
+| 90 Hz | 2909 | 741 | derived by DFPS |
+| 72 Hz | 3636 | 1468 | derived by DFPS |
+
+All three land on positive front porches. The pixel clock becomes 216,541,680 Hz (currently 165,591,864, +30.8%) and the bit clock about 1.30 GHz (currently 993.5 MHz), inside the SM8250 D-PHY range.
+
+Safety check: this node's `__local_fixups__` only references the phandle properties `io-channels` and `qcom,panel-supply-entries`, neither of which is touched, so overwriting the PHY timings cannot break the overlay's phandle fixups.
+
+**Not flashed yet.** A 30% higher bit clock is unproven on this panel, and either bad computed PHY timings or a panel that cannot take the faster link would show up as a corrupted or black screen. Have a USB cable available before flashing; `dtbobak` stays untouched throughout.
+
 ## 3. What the module does
 
 Package `com.picoxr.refreshselector`, scoped to `com.picovr.settings` **only**.
@@ -1103,6 +1169,39 @@ SurfaceControl.setAllowedDisplayConfigs(token, new int[] {configIndex, 3});
 ```
 
 Строка `no pico parameter so allow to change display config through surfaceflinger` сформулирована наоборот: именно эта ветка отклоняет запрос.
+
+### 2.6 Перенос базового тайминга на 120 Гц (собрано, не прошито)
+
+Поскольку DFPS умеет только понижать частоту, единственный путь — сделать сам тайминг по умолчанию 120 Гц и выводить из него 90 и 72, как и устроены собственные узлы PICO `*_493_120_new_video`.
+
+`build_120hz_base_dtbo.py` вносит три правки на месте, поэтому размер образа не меняется, а во всём разделе отличаются лишь 20 байт:
+
+```
+qcom,mdss-dsi-panel-framerate    90 -> 120
+qcom,mdss-dsi-v-front-porch      57 -> 14
+qcom,mdss-dsi-panel-phy-timings  перезаписано словами FDT_NOP (корректный FDT, парсеры их пропускают)
+```
+
+Тайминги PHY удалены, а не пересчитаны вручную. Эти 14 байт в DT относятся к прежней битовой частоте 993 МГц и не могут быть верны при новой; SoC использует DSI PHY v4.0, для которой 14 байт — ровно размер таблицы таймингов. Без этого свойства драйвер считает их сам, и `/proc/kallsyms` подтверждает наличие калькулятора и операций v4.0:
+
+```
+dsi_phy_hw_calculate_timing_params
+dsi_phy_hw_v4_0_calc_clk_zero / calc_clk_trail_rec_min / calc_hs_zero / calc_hs_trail
+```
+
+Расчёт не умозрительный: сжатый горизонтальный total взят из работающего контроллера DSI, где `DSI_VIDEO_MODE_TOTAL = 0x0adc033a`, то есть htotal−1 = 0x033a и vtotal−1 = 0x0adc.
+
+| Частота | vtotal | vfp | Источник |
+| --- | --- | --- | --- |
+| 120 Гц | 2182 | 14 | база |
+| 90 Гц | 2909 | 741 | выведено DFPS |
+| 72 Гц | 3636 | 1468 | выведено DFPS |
+
+Все три дают положительный front porch. Пиксельная частота становится 216 541 680 Гц (сейчас 165 591 864, +30,8%), битовая — около 1,30 ГГц (сейчас 993,5 МГц), в пределах D-PHY SM8250.
+
+Проверка безопасности: `__local_fixups__` этого узла ссылается только на phandle-свойства `io-channels` и `qcom,panel-supply-entries`, ни одно из которых не затронуто, поэтому перезапись таймингов PHY не может нарушить исправление phandle в overlay.
+
+**Пока не прошито.** Повышение битовой частоты на 30% на этой панели не проверено, и как неверно рассчитанные тайминги PHY, так и неспособность панели работать на более быстрой линии проявятся искажённым или чёрным экраном. Перед прошивкой держите наготове USB-кабель; `dtbobak` остаётся неизменным.
 
 ## 3. Что делает модуль
 

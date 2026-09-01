@@ -54,12 +54,48 @@ if len(candidate) != len(baseline):
 
 `dtbo-120hz-candidate-audit.txt` 是本项目实际使用的那份候选镜像的审计记录，可用于比对。
 
+## 生成 120 Hz 基准候选 / Build the 120 Hz base candidate / Сборка кандидата с базой 120 Гц
+
+```bash
+python build_candidate_dtbo.py  dtbo-current.img          dtbo-120hz-candidate.img
+python build_120hz_base_dtbo.py dtbo-120hz-candidate.img  dtbo-120hz-base.img
+sha256sum dtbo-120hz-base.img
+# 1c6c6cbc5e3014e70d46bddd7ad2b3d63ca92f2fabfe0153c9d0d84e43424237
+```
+
+第二步把默认时序挪到 120 Hz，使 90 与 72 可以由 DFPS 推导；理由见根目录 README 的 2.2 与 2.6 节。全部改动都在原地完成，镜像尺寸不变，整个分区仅 20 字节差异。
+
+The second step moves the default timing to 120 Hz so that 90 and 72 can be derived by DFPS; see sections 2.2 and 2.6 of the top-level README. Every edit is in place, the image keeps its exact size, and only 20 bytes differ across the whole partition.
+
+Второй шаг переносит тайминг по умолчанию на 120 Гц, чтобы 90 и 72 выводились через DFPS; см. разделы 2.2 и 2.6 в README верхнего уровня. Все правки выполняются на месте, размер образа не меняется, во всём разделе отличаются лишь 20 байт.
+
+## 刷写与回滚 / Flashing and rollback / Прошивка и откат
+
+```bash
+# 写入（需要 root，dtbobak 保持原样）
+adb push dtbo-120hz-base.img /data/local/tmp/
+adb shell su -c "dd if=/data/local/tmp/dtbo-120hz-base.img of=/dev/block/by-name/dtbo bs=4096 && sync"
+
+# 回读校验，必须与上面的 SHA-256 一致
+adb shell su -c "dd if=/dev/block/by-name/dtbo bs=4096 count=6144 | sha256sum"
+
+# 回滚：写回任一已知良品镜像
+adb shell su -c "dd if=/data/local/tmp/dtbo-current.img of=/dev/block/by-name/dtbo bs=4096 && sync"
+```
+
+刷写后必须重启才生效。校验不一致时不要重启。设备 `ro.boot.flash.locked=0`，因此 `fastboot flash dtbo` 与 EDL(9008) 都可作为后备恢复手段，两者都需要物理 USB 连接。
+
+A reboot is required for the new DTBO to take effect. Do not reboot if the checksum does not match. The device reports `ro.boot.flash.locked=0`, so both `fastboot flash dtbo` and EDL (9008) remain available as recovery paths; both need a physical USB connection.
+
+Для применения нового DTBO нужна перезагрузка. Не перезагружайтесь, если контрольная сумма не совпала. Устройство сообщает `ro.boot.flash.locked=0`, поэтому в качестве путей восстановления доступны и `fastboot flash dtbo`, и EDL (9008); для обоих нужен физический USB-кабель.
+
 ## 文件说明 / Files / Файлы
 
 | 文件 | 说明 |
 | --- | --- |
 | `build_candidate_dtbo.py` | 结构化解析并重组 DTBO，只改目标节点 |
 | `dtbo-120hz-candidate-audit.txt` | 候选镜像审计记录（偏移、尺寸、改动范围、校验值） |
+| `build_120hz_base_dtbo.py` | 把默认时序挪到 120 Hz，让 DFPS 能推导出 90 与 72 |
 | `edl-readonly-lun4-gpt-dtbo.xml` | Firehose **只读**回读配置，LUN4 上的 `gpt_header` 与 `dtbo` |
 
 `edl-readonly-lun4-gpt-dtbo.xml` 只用于回读验证，不含任何写入操作。EDL 必须使用物理 USB 连接。
