@@ -69,6 +69,27 @@ The second step moves the default timing to 120 Hz so that 90 and 72 can be deri
 
 Второй шаг переносит тайминг по умолчанию на 120 Гц, чтобы 90 и 72 выводились через DFPS; см. разделы 2.2 и 2.6 в README верхнего уровня. Все правки выполняются на месте, размер образа не меняется, во всём разделе отличаются лишь 20 байт.
 
+## 验证真实刷新率 / Verify the real rate / Проверка реальной частоты
+
+```bash
+./verify_refresh_rate.sh [adb-serial]
+```
+
+`dumpsys SurfaceFlinger` 与 PICO 自己的 `PxrCompositor` 日志都**不能**用来判断刷新率：前者按模式登记的时序反推，后者只是回读属性。脚本改为读取 DSI 控制器实际编程的时序和时钟树里的像素时钟，相除得到真值。一份典型输出暴露了三者的分歧：
+
+```
+DSI_VIDEO_MODE_TOTAL = 0x0adc033a
+pixel clock          = 165591864 Hz
+htotal = 827, vtotal = 2781
+actual refresh rate  = 72.000 Hz      <- 硬件真值
+    101 entered rate:72               <- 驱动只应用过 72
+VSYNC period: 8333333 ns              <- SurfaceFlinger 声称 120
+```
+
+Neither `dumpsys SurfaceFlinger` nor PICO's `PxrCompositor` log can be used to judge the refresh rate: the former derives it from whatever timing the mode was registered with, the latter merely echoes a property. The script reads the timing actually programmed into the DSI controller together with the pixel clock from the clock tree and divides one by the other. A typical run exposes the disagreement, as shown above.
+
+Ни `dumpsys SurfaceFlinger`, ни журнал `PxrCompositor` от PICO не годятся для оценки частоты обновления: первый выводит её из тайминга, с которым зарегистрирован режим, второй просто повторяет свойство. Скрипт читает тайминг, фактически запрограммированный в контроллере DSI, вместе с пиксельной частотой из дерева тактирования и делит одно на другое. Типичный запуск показывает расхождение, приведённое выше.
+
 ## 刷写与回滚 / Flashing and rollback / Прошивка и откат
 
 ```bash
@@ -83,11 +104,17 @@ adb shell su -c "dd if=/dev/block/by-name/dtbo bs=4096 count=6144 | sha256sum"
 adb shell su -c "dd if=/data/local/tmp/dtbo-current.img of=/dev/block/by-name/dtbo bs=4096 && sync"
 ```
 
-刷写后必须重启才生效。校验不一致时不要重启。设备 `ro.boot.flash.locked=0`，因此 `fastboot flash dtbo` 与 EDL(9008) 都可作为后备恢复手段，两者都需要物理 USB 连接。
+刷写后必须重启才生效。**校验不一致时不要重启。**
 
-A reboot is required for the new DTBO to take effect. Do not reboot if the checksum does not match. The device reports `ro.boot.flash.locked=0`, so both `fastboot flash dtbo` and EDL (9008) remain available as recovery paths; both need a physical USB connection.
+关于恢复手段：虽然 `ro.boot.flash.locked=0`，但**这台设备的 fastboot 禁用了 `flash` 命令**——能进 fastboot，却刷不了任何分区。实测可用的离线刷写途径只有 **EDL(9008)**，需要物理 USB 连接与 WinUSB 驱动。所以只要 ADB 还在，就优先用上面的 `dd` 回滚；ADB 也没了才走 9008。
 
-Для применения нового DTBO нужна перезагрузка. Не перезагружайтесь, если контрольная сумма не совпала. Устройство сообщает `ro.boot.flash.locked=0`, поэтому в качестве путей восстановления доступны и `fastboot flash dtbo`, и EDL (9008); для обоих нужен физический USB-кабель.
+A reboot is required for the new DTBO to take effect. **Do not reboot if the checksum does not match.**
+
+On recovery: although `ro.boot.flash.locked=0`, **this device's fastboot has the `flash` command disabled** — fastboot can be entered but cannot write any partition. The only offline path proven to work is **EDL (9008)**, which needs a physical USB connection and the WinUSB driver. So prefer the `dd` rollback above while ADB is alive, and fall back to 9008 only if ADB is gone too.
+
+Для применения нового DTBO нужна перезагрузка. **Не перезагружайтесь, если контрольная сумма не совпала.**
+
+О восстановлении: хотя `ro.boot.flash.locked=0`, **у этого устройства в fastboot отключена команда `flash`** — войти в fastboot можно, но записать раздел нельзя. Единственный проверенный офлайн-путь — **EDL (9008)**, для которого нужны физический USB-кабель и драйвер WinUSB. Поэтому пока ADB работает, используйте откат через `dd` выше, а 9008 — только если ADB тоже недоступен.
 
 ## 文件说明 / Files / Файлы
 
@@ -96,6 +123,7 @@ A reboot is required for the new DTBO to take effect. Do not reboot if the check
 | `build_candidate_dtbo.py` | 结构化解析并重组 DTBO，只改目标节点 |
 | `dtbo-120hz-candidate-audit.txt` | 候选镜像审计记录（偏移、尺寸、改动范围、校验值） |
 | `build_120hz_base_dtbo.py` | 把默认时序挪到 120 Hz，让 DFPS 能推导出 90 与 72 |
+| `verify_refresh_rate.sh` | 从 DSI 寄存器与时钟树算出真实刷新率，不依赖 dumpsys |
 | `edl-readonly-lun4-gpt-dtbo.xml` | Firehose **只读**回读配置，LUN4 上的 `gpt_header` 与 `dtbo` |
 
 `edl-readonly-lun4-gpt-dtbo.xml` 只用于回读验证，不含任何写入操作。EDL 必须使用物理 USB 连接。

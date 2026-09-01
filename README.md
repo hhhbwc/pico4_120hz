@@ -267,7 +267,9 @@ dsi_phy_hw_v4_0_calc_clk_zero / calc_clk_trail_rec_min / calc_hs_zero / calc_hs_
 
 安全性检查：该节点的 `__local_fixups__` 只引用 `io-channels` 与 `qcom,panel-supply-entries` 两个 phandle 属性，都没被碰到，因此覆盖 PHY 时序不会破坏 overlay 的 phandle 修正。
 
-**尚未刷入。**位时钟上调三成在这块面板上没有验证过；PHY 时序算错或面板吃不下更高链路速率都会导致花屏或黑屏。刷入前请确保 USB 线可用，`dtbobak` 全程保持原样。
+**尚未刷入。**位时钟上调三成在这块面板上没有验证过；PHY 时序算错或面板吃不下更高链路速率都会导致花屏或黑屏。
+
+刷入前请确保 USB 线可用。注意这台设备虽然 `ro.boot.flash.locked=0`，但**fastboot 的 `flash` 命令被禁用**——能进 fastboot 却刷不了分区，唯一可用的离线刷写途径是 **EDL(9008)**。所以只要 ADB 还在就用 `dd` 回滚，`dtbobak` 全程保持原样作为第二道保险。刷入后用 `pico4-display-analysis/verify_refresh_rate.sh` 判断真实刷新率，不要看 dumpsys。
 
 ## 3. 模块做了什么
 
@@ -439,6 +441,7 @@ adb shell su -c "dmesg | grep -iE 'dfps|dsi|underrun|hfp|pll'"
 
 EDL 注意事项：
 
+- 这台设备的 **fastboot 禁用了 `flash` 命令**——能进 fastboot 但刷不了分区，所以离线刷写只能走 EDL(9008)。
 - EDL(9008) 操作**必须使用物理 USB 连接**，无线 ADB 阶段不要尝试。
 - 驱动需要切换为 WinUSB，Firehose 通过 LUN4 访问 `dtbo`。
 - 只写活动 `dtbo`，保持 `dtbobak` 原样，作为二次保险。
@@ -450,6 +453,8 @@ EDL 注意事项：
 pico4-display-analysis/
   README.md                      固件校验值、导出方法、候选镜像生成步骤
   build_candidate_dtbo.py        结构化解析并重组 DTBO，只改目标面板节点
+  build_120hz_base_dtbo.py       把默认时序挪到 120 Hz
+  verify_refresh_rate.sh         从 DSI 寄存器算出真实刷新率
   dtbo-120hz-candidate-audit.txt 候选镜像审计记录
   edl-readonly-lun4-gpt-dtbo.xml Firehose 只读回读配置（LUN4）
 pico-refresh-selector/
@@ -734,7 +739,9 @@ All three land on positive front porches. The pixel clock becomes 216,541,680 Hz
 
 Safety check: this node's `__local_fixups__` only references the phandle properties `io-channels` and `qcom,panel-supply-entries`, neither of which is touched, so overwriting the PHY timings cannot break the overlay's phandle fixups.
 
-**Not flashed yet.** A 30% higher bit clock is unproven on this panel, and either bad computed PHY timings or a panel that cannot take the faster link would show up as a corrupted or black screen. Have a USB cable available before flashing; `dtbobak` stays untouched throughout.
+**Not flashed yet.** A 30% higher bit clock is unproven on this panel, and either bad computed PHY timings or a panel that cannot take the faster link would show up as a corrupted or black screen.
+
+Have a USB cable available before flashing. Note that although this device reports `ro.boot.flash.locked=0`, **its fastboot has the `flash` command disabled** — fastboot can be entered but cannot write a partition, so the only usable offline path is **EDL (9008)**. Roll back with `dd` while ADB is alive, and `dtbobak` stays untouched throughout as a second safety net. After flashing, judge the real rate with `pico4-display-analysis/verify_refresh_rate.sh` rather than dumpsys.
 
 ## 3. What the module does
 
@@ -906,6 +913,7 @@ adb shell su -c "dmesg | grep -iE 'dfps|dsi|underrun|hfp|pll'"
 
 EDL notes:
 
+- This device's **fastboot has the `flash` command disabled** — fastboot can be entered but cannot write a partition, so EDL (9008) is the only offline path.
 - EDL (9008) work **requires a physical USB connection**; never attempt it over wireless ADB.
 - Switch the driver to WinUSB; Firehose reaches `dtbo` through LUN4.
 - Write the active `dtbo` only and leave `dtbobak` untouched as a second safety net.
@@ -917,6 +925,8 @@ EDL notes:
 pico4-display-analysis/
   README.md                      checksums, dump instructions, candidate build steps
   build_candidate_dtbo.py        structured DTBO parse and rebuild, target node only
+  build_120hz_base_dtbo.py       moves the default timing to 120 Hz
+  verify_refresh_rate.sh         computes the real rate from DSI registers
   dtbo-120hz-candidate-audit.txt audit record of the candidate image
   edl-readonly-lun4-gpt-dtbo.xml Firehose read-only configuration (LUN4)
 pico-refresh-selector/
@@ -1201,7 +1211,9 @@ dsi_phy_hw_v4_0_calc_clk_zero / calc_clk_trail_rec_min / calc_hs_zero / calc_hs_
 
 Проверка безопасности: `__local_fixups__` этого узла ссылается только на phandle-свойства `io-channels` и `qcom,panel-supply-entries`, ни одно из которых не затронуто, поэтому перезапись таймингов PHY не может нарушить исправление phandle в overlay.
 
-**Пока не прошито.** Повышение битовой частоты на 30% на этой панели не проверено, и как неверно рассчитанные тайминги PHY, так и неспособность панели работать на более быстрой линии проявятся искажённым или чёрным экраном. Перед прошивкой держите наготове USB-кабель; `dtbobak` остаётся неизменным.
+**Пока не прошито.** Повышение битовой частоты на 30% на этой панели не проверено, и как неверно рассчитанные тайминги PHY, так и неспособность панели работать на более быстрой линии проявятся искажённым или чёрным экраном.
+
+Перед прошивкой держите наготове USB-кабель. Учтите: хотя устройство сообщает `ro.boot.flash.locked=0`, **в его fastboot отключена команда `flash`** — войти можно, но записать раздел нельзя, поэтому единственный рабочий офлайн-путь — **EDL (9008)**. Пока ADB работает, откатывайтесь через `dd`; `dtbobak` всё время остаётся нетронутым как вторая страховка. После прошивки определяйте реальную частоту с помощью `pico4-display-analysis/verify_refresh_rate.sh`, а не dumpsys.
 
 ## 3. Что делает модуль
 
@@ -1373,6 +1385,7 @@ adb shell su -c "dmesg | grep -iE 'dfps|dsi|underrun|hfp|pll'"
 
 Замечания по EDL:
 
+- В fastboot этого устройства **отключена команда `flash`** — войти можно, но записать раздел нельзя, поэтому EDL (9008) остаётся единственным офлайн-путём.
 - Работа с EDL (9008) **требует физического USB-подключения**; не пытайтесь делать это по беспроводному ADB.
 - Драйвер нужно переключить на WinUSB; Firehose обращается к `dtbo` через LUN4.
 - Записывайте только активный `dtbo`, оставляя `dtbobak` нетронутым как вторую страховку.
@@ -1384,6 +1397,8 @@ adb shell su -c "dmesg | grep -iE 'dfps|dsi|underrun|hfp|pll'"
 pico4-display-analysis/
   README.md                      контрольные суммы, снятие образов, сборка кандидата
   build_candidate_dtbo.py        разбор и пересборка DTBO, только целевой узел
+  build_120hz_base_dtbo.py       переносит тайминг по умолчанию на 120 Гц
+  verify_refresh_rate.sh         вычисляет реальную частоту из регистров DSI
   dtbo-120hz-candidate-audit.txt журнал аудита образа-кандидата
   edl-readonly-lun4-gpt-dtbo.xml конфигурация Firehose только для чтения (LUN4)
 pico-refresh-selector/
