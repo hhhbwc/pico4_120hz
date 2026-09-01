@@ -236,11 +236,9 @@ SurfaceControl.setAllowedDisplayConfigs(token, new int[] {configIndex, 3});
 
 日志里那句 `no pico parameter so allow to change display config through surfaceflinger` 措辞有误，实际含义是**不放行**。
 
-### 2.6 把基准时序挪到 120 Hz（已构建，尚未刷入）
+### 2.6 120 Hz 基准时序候选（已测试并回滚）
 
-既然 DFPS 只能降频，唯一的出路就是让默认时序本身变成 120 Hz，再让 90 与 72 从它推导出来——这正是 PICO 自己 `*_493_120_new_video` 节点的结构。
-
-`build_120hz_base_dtbo.py` 只做三处原地改动，镜像尺寸不变，全镜像仅 20 字节差异：
+既然 DFPS 只能降频，唯一的出路就是让默认时序本身变成 120 Hz，再让 90 与 72 从它推导出来。这份候选已经实际刷入并重启测试过，结果是黑屏和底部花屏，随后已通过有线 ADB 回滚到原厂 DTBO。`build_120hz_base_dtbo.py` 只做三处原地改动，镜像尺寸不变，全镜像仅 20 字节差异；该脚本用于复现实验，不代表候选可用：
 
 ```
 qcom,mdss-dsi-panel-framerate    90 -> 120
@@ -267,7 +265,7 @@ dsi_phy_hw_v4_0_calc_clk_zero / calc_clk_trail_rec_min / calc_hs_zero / calc_hs_
 
 安全性检查：该节点的 `__local_fixups__` 只引用 `io-channels` 与 `qcom,panel-supply-entries` 两个 phandle 属性，都没被碰到，因此覆盖 PHY 时序不会破坏 overlay 的 phandle 修正。
 
-**尚未刷入。**位时钟上调三成在这块面板上没有验证过；PHY 时序算错或面板吃不下更高链路速率都会导致花屏或黑屏。
+**实测结果：黑屏并伴随底部花屏。**该候选已经实际写入活动 `dtbo` 并重启测试，随后已通过有线 ADB 回滚到原厂 DTBO。失败时内核出现 `DSI_0: LLENGTH = 3400`，说明 DSI 传输长度与 LS026B3SA 的面板配置不匹配。
 
 刷入前请确保 USB 线可用。注意这台设备虽然 `ro.boot.flash.locked=0`，但**fastboot 的 `flash` 命令被禁用**——能进 fastboot 却刷不了分区，唯一可用的离线刷写途径是 **EDL(9008)**。所以只要 ADB 还在就用 `dd` 回滚，`dtbobak` 全程保持原样作为第二道保险。刷入后用 `pico4-display-analysis/verify_refresh_rate.sh` 判断真实刷新率，不要看 dumpsys。
 
@@ -279,24 +277,24 @@ dsi_phy_hw_v4_0_calc_clk_zero / calc_clk_trail_rec_min / calc_hs_zero / calc_hs_
 | --- | --- |
 | `PicolabFragment.onCreateView(...)` | 移除原刷新率 `SwitchView`，在同一行插入 `DropdownOptionView`，沿用同一个 id |
 | `PicolabFragment.onCheckedChanged(...)` | 拦截旧开关，避免二态语义与三档冲突 |
-| `PopupMenuHelper.c(...)` | 以锚点 id 识别刷新率弹窗，把菜单项替换为 `72 Hz / 90 Hz / 120 Hz`，并改写 `checkedPosition` |
-| `PicolabFragment$3.onItemClick(...)` | 拦截电源模式逻辑，改为按刷新率处理：写厂商状态 → 更新行文本 → 关闭弹窗 → 调用 `K0()` 重启 |
+| `PopupMenuHelper.c(...)` | 以锚点 id 识别刷新率弹窗，把菜单项替换为当前真实存在的 display config；原厂 DTBO 下为 `72 Hz / 90 Hz` |
+| `PicolabFragment$3.onItemClick(...)` | 拦截电源模式逻辑，按真实 display config 处理刷新率；live 切换失败时才提示重启 |
 | `Utils.s1()` | 强制返回 `true`，抵消 `Constant.i()` 只认 `FalconCV3` 的机型门 |
 | `SurfaceControl.setAllowedDisplayConfigs` | 带上 PICO 魔数 `3` 调用，实现运行时即时切换，无需重启 |
 | `SettingApplication.onCreate(...)` | 只读诊断探针，打印 `sdk_refreshRate`、`sdk_Recommand_refreshRate` 与两个属性的当前值 |
 
-三档请求路径，全部显式写入，不依赖 `Utils.v1()` 的 `s1()` 判定：
+刷新率请求路径，全部显式写入，不依赖 `Utils.v1()` 的 `s1()` 判定；原厂 DTBO 当前只提供真实的 72/90 两档：
 
 ```
 72  Hz  -> persist.pvr.display.type = jdi49372  + sdk_refreshRate = 72
 90  Hz  -> persist.pvr.display.type = jdi49390  + sdk_refreshRate = 90
-120 Hz  -> persist.pvr.display.type = jdi493120 + sdk_refreshRate = 120
+120 Hz  -> 仅用于失败的 DTBO 实验，当前菜单已移除
 共同部分  sdk_Recommand_refreshRate 同步为同一值
           Utils.P0 / Utils.B0 / Utils.w1(72 档 24，其余 30)
           setAllowedDisplayConfigs(token, {configIndex, 3})  ← 立即生效
 ```
 
-菜单只列出真实存在的 display config，因此当前是 72 与 120。切换成功即时生效；只有在 live 切换失败时才会退回"需要重启"的提示，此时可用 `pico_refresh_selector_auto_restart=1` 恢复原生的自动重启行为。
+菜单只列出真实存在的 display config。当前原厂 DTBO 下是 72 与 90；120 选项已移除，因为对应候选会导致黑屏或花屏。
 
 模块不修改 PICO Settings 的 APK，不改资源，不动任何分区。禁用模块或移除作用域即可完全恢复原生界面。
 
@@ -346,7 +344,7 @@ PxrCompositor: setRefreshRate:120.000000, current rate: 120.000000
 
 **90 Hz 是这块面板的原生档位。**面板名就叫 `sharp ls026b3sa 90hz video mode dsi panel`，`panel-framerate = 90`，DFPS 基准也是 90。它不需要任何时序改动，是三档里最容易拿到的一档。配合已经验证的魔数 `3`，可以做到 72↔90 运行时即时切换，不用重启——这比原厂那个必须重启的开关更好用。
 
-**120 Hz 需要新写一份时序，还没有做。**按 2.2 的推算，120 Hz 要求：
+**120 Hz 完整时序候选已经写过并测试失败。**按 2.2 的推算，120 Hz 要求：
 
 ```
 vtotal ≥ 2160 + 4 + 4 + 1 = 2169
@@ -363,7 +361,7 @@ qcom,mdss-dsi-post-90-nt57900-on-command  = ... b9 13 5f      # 与 72 完全相
 qcom,mdss-dsi-post-120-nt57900-on-command = ... b9 10 2c 01 cb # 明显不同
 ```
 
-说明 PICO/Sharp 确实为这块面板准备过 120 Hz 的 TCON 配置。但要真正跑起来，必须补一份 `timing@1`，自行给出 120 Hz 的 porch、`panel-clockrate` 和重新计算的 `panel-phy-timings`。PHY 时序算错会直接黑屏或不稳定，属于比之前所有改动都更高的风险，因此在有把握之前不做。
+说明 PICO/Sharp 曾准备过一段 120 Hz TCON 补充命令，但实际测试证明它不足以让 LS026B3SA 稳定运行 120 Hz。完整候选已经补过 timing、panel-clockrate 和 PHY，仍然黑屏花屏；继续写入前需要新的、经过验证的面板级配置。
 
 **不要用日志或 dumpsys 判断成功。**唯一可信的判据是内核的 `dsi_bridge_enable entered rate`：
 
@@ -381,7 +379,7 @@ adb shell su -c "dmesg | grep -oE 'entered rate:[0-9]+' | sort | uniq -c"
 
 同一份 DTBO 中的 `sharp_493_120_new_video` 是另一块 960×3664 面板，带独立 GPIO/PWM、不同 DSC 拓扑和完整 120 Hz timing，不能直接复制到 4320×2160 的 LS026B3SA。后续若继续 120 Hz，必须针对 LS026B3SA 单独构造完整的 120 Hz timing 和 TCON 初始化序列；目前没有可靠的厂商参考，继续写分区只是在盲试。
 
-## 5.1 失败分析
+## 5.2 失败分析
 
 120 Hz 候选的共同结果：内核可进入 `fps=120`，但屏幕黑屏或底部花屏。最终抓到的错误是：
 
@@ -730,11 +728,9 @@ SurfaceControl.setAllowedDisplayConfigs(token, new int[] {configIndex, 3});
 
 The log line `no pico parameter so allow to change display config through surfaceflinger` is worded backwards: that branch is the one that refuses.
 
-### 2.6 Moving the base timing to 120 Hz (built, not flashed)
+### 2.6 120 Hz base-timing candidate (tested and rolled back)
 
-Since DFPS can only lower the rate, the only way forward is to make the default timing itself 120 Hz and let 90 and 72 be derived from it — which is exactly how PICO's own `*_493_120_new_video` nodes are arranged.
-
-`build_120hz_base_dtbo.py` makes three in-place edits, so the image keeps its exact size and only 20 bytes differ in the whole partition:
+Since DFPS can only lower the rate, the only way forward is to make the default timing itself 120 Hz and let 90 and 72 be derived from it. This candidate was flashed and tested, produced a black screen with a corrupted band at the bottom, and was then rolled back to the stock DTBO. `build_120hz_base_dtbo.py` is retained to reproduce the experiment and does not indicate a usable candidate; only 20 bytes differ in the whole partition:
 
 ```
 qcom,mdss-dsi-panel-framerate    90 -> 120
@@ -761,7 +757,7 @@ All three land on positive front porches. The pixel clock becomes 216,541,680 Hz
 
 Safety check: this node's `__local_fixups__` only references the phandle properties `io-channels` and `qcom,panel-supply-entries`, neither of which is touched, so overwriting the PHY timings cannot break the overlay's phandle fixups.
 
-**Not flashed yet.** A 30% higher bit clock is unproven on this panel, and either bad computed PHY timings or a panel that cannot take the faster link would show up as a corrupted or black screen.
+**Tested and rolled back.** This candidate was written to the active `dtbo` and tested after reboot; it produced a black screen with a corrupted band at the bottom. It was then rolled back to the stock DTBO through wired ADB. The failure included `DSI_0: LLENGTH = 3400`, indicating a mismatch between DSI transfer length and the LS026B3SA panel configuration.
 
 Have a USB cable available before flashing. Note that although this device reports `ro.boot.flash.locked=0`, **its fastboot has the `flash` command disabled** — fastboot can be entered but cannot write a partition, so the only usable offline path is **EDL (9008)**. Roll back with `dd` while ADB is alive, and `dtbobak` stays untouched throughout as a second safety net. After flashing, judge the real rate with `pico4-display-analysis/verify_refresh_rate.sh` rather than dumpsys.
 
@@ -772,25 +768,25 @@ Package `com.picoxr.refreshselector`, scoped to `com.picovr.settings` **only**.
 | Hook | Purpose |
 | --- | --- |
 | `PicolabFragment.onCreateView(...)` | Removes the stock refresh `SwitchView` and inserts a `DropdownOptionView` in the same row, reusing the same id |
-| `PicolabFragment.onCheckedChanged(...)` | Blocks the old switch so two-state semantics cannot fight the three-way choice |
-| `PopupMenuHelper.c(...)` | Recognises the refresh popup by anchor id, replaces the items with `72 Hz / 90 Hz / 120 Hz` and rewrites `checkedPosition` |
-| `PicolabFragment$3.onItemClick(...)` | Replaces power-mode handling with rate handling: write vendor state, update the row label, dismiss the popup, call `K0()` to reboot |
+| `PicolabFragment.onCheckedChanged(...)` | Blocks the old switch so two-state semantics cannot fight the rate selector |
+| `PopupMenuHelper.c(...)` | Recognises the refresh popup by anchor id, replaces the items with the real `72 Hz / 90 Hz` configs and rewrites `checkedPosition` |
+| `PicolabFragment$3.onItemClick(...)` | Replaces power-mode handling with real display-config rate handling; reboot is only a fallback when live switching fails |
 | `Utils.s1()` | Forced to `true`, cancelling the model gate where `Constant.i()` only accepts `FalconCV3` |
 | `SurfaceControl.setAllowedDisplayConfigs` | Called with PICO's marker `3` so the rate applies live, with no reboot |
 | `SettingApplication.onCreate(...)` | Read-only probe that logs `sdk_refreshRate`, `sdk_Recommand_refreshRate` and both properties |
 
-Request paths, all written explicitly instead of relying on the `s1()` decision inside `Utils.v1()`:
+Request paths are written explicitly instead of relying on the `s1()` decision inside `Utils.v1()`; the stock DTBO currently exposes only genuine 72/90 configs:
 
 ```
 72  Hz  -> persist.pvr.display.type = jdi49372  + sdk_refreshRate = 72
 90  Hz  -> persist.pvr.display.type = jdi49390  + sdk_refreshRate = 90
-120 Hz  -> persist.pvr.display.type = jdi493120 + sdk_refreshRate = 120
+120 Hz  -> only used by the failed DTBO experiment; removed from the current menu
 shared     sdk_Recommand_refreshRate mirrors the same value
            Utils.P0 / Utils.B0 / Utils.w1(24 for 72 Hz, 30 otherwise)
            setAllowedDisplayConfigs(token, {configIndex, 3})  <- applies at once
 ```
 
-The menu only lists display configs that really exist, so right now it offers 72 and 120. A successful switch takes effect immediately; the "reboot required" path is only used when the live switch fails, and `pico_refresh_selector_auto_restart=1` restores the stock automatic reboot.
+The menu only lists display configs that really exist. With the stock DTBO it offers 72 and 90. The 120 entry is intentionally removed because every tested 120 Hz DTBO produced a black screen or corruption.
 
 The module never patches the PICO Settings APK, never touches resources and never writes a partition. Disabling the module or removing its scope fully restores the stock UI.
 
@@ -840,7 +836,7 @@ PxrCompositor: setRefreshRate:120.000000, current rate: 120.000000
 
 **90 Hz is this panel's native rate.** The panel is literally named `sharp ls026b3sa 90hz video mode dsi panel`, `panel-framerate = 90`, and the DFPS base is 90. It needs no timing work at all and is the easiest of the three. Combined with the verified marker `3`, 72↔90 can be switched live with no reboot — better than the stock toggle, which always rebooted.
 
-**120 Hz needs a newly authored timing, which has not been done.** Following the arithmetic in 2.2, 120 Hz requires:
+**A complete 120 Hz timing candidate was authored and tested, but failed.** Following the arithmetic in 2.2, 120 Hz requires:
 
 ```
 vtotal >= 2160 + 4 + 4 + 1 = 2169
@@ -857,7 +853,7 @@ qcom,mdss-dsi-post-90-nt57900-on-command  = ... b9 13 5f      # identical to 72
 qcom,mdss-dsi-post-120-nt57900-on-command = ... b9 10 2c 01 cb # clearly different
 ```
 
-So PICO/Sharp did prepare a 120 Hz TCON configuration for this panel. Making it run, though, means adding a `timing@1` with hand-authored 120 Hz porches, `panel-clockrate` and recomputed `panel-phy-timings`. Wrong PHY timings mean a black screen or instability, a higher risk than anything done so far, so it stays untouched until it can be done with confidence.
+PICO/Sharp did prepare a 120 Hz supplemental TCON command, but testing showed that it is not sufficient for stable 120 Hz operation on LS026B3SA. A complete candidate with timing, panel-clockrate and PHY changes was tested and still produced a black screen and corruption; further writes require a new panel-specific, validated configuration.
 
 **Do not judge success from logs or dumpsys.** The only trustworthy measure is the kernel's `dsi_bridge_enable entered rate`:
 
@@ -867,7 +863,7 @@ adb shell su -c "dmesg | grep -oE 'entered rate:[0-9]+' | sort | uniq -c"
 
 **The choice has to be re-applied after a reboot.** SurfaceFlinger returns to its default config on every start and the empty-allowed-set problem in `DisplayModeDirector` remains. The module stores the choice in `Settings.Global` and reconciles it whenever PICO Settings starts; making it fully transparent needs the hook extended into `system_server`, which is not done.
 
-## 5.1 Failure analysis
+## 5.2 Failure analysis
 
 All 120 Hz candidates had the same outcome: the kernel entered `fps=120`, but the panel was black or showed a corrupted band at the bottom. The final low-level error captured was:
 
@@ -1216,11 +1212,9 @@ SurfaceControl.setAllowedDisplayConfigs(token, new int[] {configIndex, 3});
 
 Строка `no pico parameter so allow to change display config through surfaceflinger` сформулирована наоборот: именно эта ветка отклоняет запрос.
 
-### 2.6 Перенос базового тайминга на 120 Гц (собрано, не прошито)
+### 2.6 Кандидат с базовым таймингом 120 Гц (проверен и откатан)
 
-Поскольку DFPS умеет только понижать частоту, единственный путь — сделать сам тайминг по умолчанию 120 Гц и выводить из него 90 и 72, как и устроены собственные узлы PICO `*_493_120_new_video`.
-
-`build_120hz_base_dtbo.py` вносит три правки на месте, поэтому размер образа не меняется, а во всём разделе отличаются лишь 20 байт:
+Поскольку DFPS умеет только понижать частоту, единственный путь — сделать сам тайминг по умолчанию 120 Гц и выводить из него 90 и 72. Кандидат был реально прошит и проверен: получены чёрный экран и искажённая полоса снизу, после чего выполнен откат к заводскому DTBO. Скрипт сохранён для воспроизведения эксперимента и не означает, что кандидат пригоден; в разделе отличаются лишь 20 байт:
 
 ```
 qcom,mdss-dsi-panel-framerate    90 -> 120
@@ -1247,7 +1241,7 @@ dsi_phy_hw_v4_0_calc_clk_zero / calc_clk_trail_rec_min / calc_hs_zero / calc_hs_
 
 Проверка безопасности: `__local_fixups__` этого узла ссылается только на phandle-свойства `io-channels` и `qcom,panel-supply-entries`, ни одно из которых не затронуто, поэтому перезапись таймингов PHY не может нарушить исправление phandle в overlay.
 
-**Пока не прошито.** Повышение битовой частоты на 30% на этой панели не проверено, и как неверно рассчитанные тайминги PHY, так и неспособность панели работать на более быстрой линии проявятся искажённым или чёрным экраном.
+**Проверено и откатано.** Кандидат был записан в активный `dtbo` и проверен после перезагрузки: получены чёрный экран и искажённая полоса снизу. Затем через проводной ADB выполнен откат к заводскому DTBO. В журнале появилась ошибка `DSI_0: LLENGTH = 3400`, то есть длина передачи DSI не совпала с конфигурацией LS026B3SA.
 
 Перед прошивкой держите наготове USB-кабель. Учтите: хотя устройство сообщает `ro.boot.flash.locked=0`, **в его fastboot отключена команда `flash`** — войти можно, но записать раздел нельзя, поэтому единственный рабочий офлайн-путь — **EDL (9008)**. Пока ADB работает, откатывайтесь через `dd`; `dtbobak` всё время остаётся нетронутым как вторая страховка. После прошивки определяйте реальную частоту с помощью `pico4-display-analysis/verify_refresh_rate.sh`, а не dumpsys.
 
@@ -1259,24 +1253,24 @@ dsi_phy_hw_v4_0_calc_clk_zero / calc_clk_trail_rec_min / calc_hs_zero / calc_hs_
 | --- | --- |
 | `PicolabFragment.onCreateView(...)` | Удаляет заводской `SwitchView` и вставляет `DropdownOptionView` в ту же строку с тем же id |
 | `PicolabFragment.onCheckedChanged(...)` | Блокирует старый переключатель, чтобы двоичная логика не конфликтовала с тремя вариантами |
-| `PopupMenuHelper.c(...)` | Определяет попап частоты по id якоря, заменяет элементы на `72 Hz / 90 Hz / 120 Hz` и переписывает `checkedPosition` |
-| `PicolabFragment$3.onItemClick(...)` | Вместо логики режимов питания обрабатывает частоту: запись состояния, обновление подписи, закрытие попапа, вызов `K0()` |
+| `PopupMenuHelper.c(...)` | Определяет попап частоты по id якоря, заменяет элементы на реальные конфигурации `72 Hz / 90 Hz` и переписывает `checkedPosition` |
+| `PicolabFragment$3.onItemClick(...)` | Вместо логики режимов питания обрабатывает реальные конфигурации 72/90; при неудаче live-переключения используется резервный путь |
 | `Utils.s1()` | Принудительно `true`, чтобы обойти проверку модели, где `Constant.i()` принимает только `FalconCV3` |
 | `SurfaceControl.setAllowedDisplayConfigs` | Вызывается с маркером PICO `3`, поэтому частота применяется на ходу без перезагрузки |
 | `SettingApplication.onCreate(...)` | Диагностический зонд только для чтения: печатает `sdk_refreshRate`, `sdk_Recommand_refreshRate` и оба свойства |
 
-Пути запроса — все три записываются явно, без опоры на проверку `s1()` внутри `Utils.v1()`:
+Пути запроса записываются явно, без опоры на проверку `s1()` внутри `Utils.v1()`; на заводском DTBO доступны только реальные 72/90:
 
 ```
 72  Гц  -> persist.pvr.display.type = jdi49372  + sdk_refreshRate = 72
 90  Гц  -> persist.pvr.display.type = jdi49390  + sdk_refreshRate = 90
-120 Гц  -> persist.pvr.display.type = jdi493120 + sdk_refreshRate = 120
+120 Гц  -> использовались только в неудачном эксперименте; на заводском DTBO не показываются
 общее      sdk_Recommand_refreshRate получает то же значение
            Utils.P0 / Utils.B0 / Utils.w1(24 для 72 Гц, иначе 30)
            setAllowedDisplayConfigs(token, {configIndex, 3})  <- применяется сразу
 ```
 
-Меню перечисляет только реально существующие конфигурации дисплея, поэтому сейчас доступны 72 и 120. Успешное переключение вступает в силу немедленно; вариант с перезагрузкой используется только при неудаче live-переключения, а `pico_refresh_selector_auto_restart=1` возвращает штатную автоматическую перезагрузку.
+Меню перечисляет только реально существующие конфигурации дисплея. На заводском DTBO доступны 72 и 90; вариант 120 удалён, поскольку его кандидаты давали чёрный экран и искажения.
 
 Модуль не патчит APK настроек PICO, не меняет ресурсы и не пишет в разделы. Отключение модуля или снятие области действия полностью восстанавливает штатный интерфейс.
 
@@ -1326,7 +1320,7 @@ PxrCompositor: setRefreshRate:120.000000, current rate: 120.000000
 
 **90 Гц — родная частота этой панели.** Панель так и называется: `sharp ls026b3sa 90hz video mode dsi panel`, `panel-framerate = 90`, база DFPS тоже 90. Ей не нужны никакие правки таймингов, это самый простой из трёх вариантов. Вместе с подтверждённым маркером `3` переключение 72↔90 работает на ходу без перезагрузки — удобнее заводского переключателя, который всегда перезагружал устройство.
 
-**120 Гц требуют написать новый тайминг, и это не сделано.** По расчёту из 2.2 для 120 Гц нужно:
+**Полный кандидат тайминга 120 Гц был создан и проверен, но не сработал.** По расчёту из 2.2 для 120 Гц нужно:
 
 ```
 vtotal >= 2160 + 4 + 4 + 1 = 2169
@@ -1343,7 +1337,7 @@ qcom,mdss-dsi-post-90-nt57900-on-command  = ... b9 13 5f      # идентичн
 qcom,mdss-dsi-post-120-nt57900-on-command = ... b9 10 2c 01 cb # явно иное
 ```
 
-То есть PICO/Sharp действительно готовили конфигурацию TCON на 120 Гц для этой панели. Но чтобы она заработала, нужно добавить `timing@1` с вручную рассчитанными porch для 120 Гц, `panel-clockrate` и пересчитанными `panel-phy-timings`. Ошибка в тайминге PHY означает чёрный экран или нестабильность — риск выше всего сделанного ранее, поэтому это отложено до полной уверенности.
+PICO/Sharp действительно подготовили дополнительную команду TCON для 120 Гц, но проверка показала, что её недостаточно для стабильной работы LS026B3SA на 120 Гц. Полный кандидат с timing, panel-clockrate и PHY уже проверялся и дал чёрный экран с искажениями; дальнейшая запись требует новой проверенной конфигурации именно для этой панели.
 
 **Не судите об успехе по журналам или dumpsys.** Единственный достоверный критерий — `dsi_bridge_enable entered rate` в ядре:
 
@@ -1353,7 +1347,7 @@ adb shell su -c "dmesg | grep -oE 'entered rate:[0-9]+' | sort | uniq -c"
 
 **После перезагрузки выбор нужно применить заново.** SurfaceFlinger при каждом старте возвращается к конфигурации по умолчанию, проблема пустого набора в `DisplayModeDirector` сохраняется. Модуль хранит выбор в `Settings.Global` и сверяет его при запуске настроек PICO; для полной незаметности нужно расширить хук на `system_server`, что не сделано.
 
-## 5.1 Анализ неудачи
+## 5.2 Анализ неудачи
 
 Все кандидаты 120 Гц дали один результат: ядро входило в `fps=120`, но панель оставалась чёрной или показывала искажённую полосу снизу. Последняя низкоуровневая ошибка:
 
