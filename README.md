@@ -1,20 +1,20 @@
 # pico4_120hz
 
-**PICO 4 显示刷新率解锁：DTBO 枚举 120 Hz + PICO Settings 原生刷新率下拉菜单**
+**PICO 4 显示刷新率研究：原生 72/90 Hz + 120 Hz DTBO 超频实验**
 
-**PICO 4 display refresh-rate unlock: 120 Hz DTBO enumeration + a native refresh-rate dropdown in PICO Settings**
+**PICO 4 display refresh-rate research: stock 72/90 Hz + 120 Hz DTBO overclock experiments**
 
-**Разблокировка частоты обновления PICO 4: перечисление 120 Гц через DTBO + нативное выпадающее меню в настройках PICO**
+**Исследование частоты обновления PICO 4: штатные 72/90 Гц + эксперименты с разгоном DTBO до 120 Гц**
 
 [中文](#中文) · [English](#english) · [Русский](#русский)
 
 > **当前状态 / Current status / Текущий статус**
 >
-> **120 Hz 尚未真正实现。**DTBO 让 Android 枚举出一个标记为 120 Hz 的模式，SurfaceFlinger 也会报 `VSYNC period: 8333333 ns`，但面板从未真的以 120 Hz 扫描：内核里 `dsi_bridge_enable entered rate` 始终是 `72`。原因是这块面板的 DFPS 只能降频不能升频，详见[2.2](#22-dfps-只能降频不能升频)。**当前候选 DTBO 反而弄丢了原厂真实可用的 90 Hz**，建议先刷回原始 DTBO，见[已知限制](#5-已知限制)。
+> **最终实测：120 Hz 尚未实现。**候选 DTBO 可以让内核枚举并尝试 120 Hz，但所有候选都会出现黑屏或底部花屏；已恢复原厂 DTBO。当前设备稳定运行原生 72/90 Hz。原因不是简单的 DFPS 列表，而是 LS026B3SA 缺少经过验证的完整 120 Hz timing、bit clock、PHY、DSC/TCON 配套配置，详见[失败分析](#51-失败分析)。
 >
-> **120 Hz is not actually working yet.** The DTBO makes Android enumerate a mode labelled 120 Hz and SurfaceFlinger reports `VSYNC period: 8333333 ns`, but the panel never scans at 120 Hz: the kernel's `dsi_bridge_enable entered rate` is always `72`. This panel's DFPS can only lower the rate, never raise it — see [2.2](#22-dfps-can-only-lower-the-rate). **The candidate DTBO also loses the genuine 90 Hz the stock firmware had**, so flashing the stock DTBO back is recommended; see [known limitations](#5-known-limitations).
+> **Final measurement: 120 Hz is not implemented yet.** Candidate DTBOs made the kernel enumerate and attempt 120 Hz, but every candidate produced a black screen or a corrupted band at the bottom; the stock DTBO has been restored. The device is currently stable at stock 72/90 Hz. The blocker is not just the DFPS list: LS026B3SA lacks a vendor-validated complete 120 Hz timing, bit clock, PHY and DSC/TCON configuration. See [failure analysis](#51-failure-analysis).
 >
-> **120 Гц пока не работают.** DTBO заставляет Android перечислить режим с меткой 120 Гц, и SurfaceFlinger сообщает `VSYNC period: 8333333 ns`, но панель никогда не сканирует на 120 Гц: в ядре `dsi_bridge_enable entered rate` всегда `72`. DFPS этой панели умеет только понижать частоту — см. [2.2](#22-dfps-умеет-только-понижать-частоту). **Кандидат DTBO вдобавок теряет реальные 90 Гц из заводской прошивки**, поэтому рекомендуется вернуть исходный DTBO; см. [известные ограничения](#5-известные-ограничения).
+> **Итоговый замер: 120 Гц пока не реализованы.** Кандидаты DTBO заставляли ядро перечислять и пробовать 120 Гц, но каждый вариант давал чёрный экран или искажённую полосу снизу; исходный DTBO восстановлен. Сейчас устройство стабильно работает на штатных 72/90 Гц. Проблема не только в списке DFPS: для LS026B3SA нет проверенной полной конфигурации 120 Гц — timing, bit clock, PHY и DSC/TCON. См. [анализ неудачи](#51-анализ-неудачи).
 
 ---
 
@@ -380,6 +380,20 @@ adb shell su -c "dmesg | grep -oE 'entered rate:[0-9]+' | sort | uniq -c"
 继续对比 DTBO 后确认，Sharp LS026B3SA 节点只有一个 `timing@0`，没有独立的 120 Hz `timing@1`，也没有 `qcom,mdss-dsi-panel-clockrate`。同一节点里虽然存在 `post-120-nt57900-on-command`，但它只是按刷新率命名的 53 字节补充命令；它不能替代完整的 120 Hz timing、PHY、时钟和 TCON 初始化配置。
 
 同一份 DTBO 中的 `sharp_493_120_new_video` 是另一块 960×3664 面板，带独立 GPIO/PWM、不同 DSC 拓扑和完整 120 Hz timing，不能直接复制到 4320×2160 的 LS026B3SA。后续若继续 120 Hz，必须针对 LS026B3SA 单独构造完整的 120 Hz timing 和 TCON 初始化序列；目前没有可靠的厂商参考，继续写分区只是在盲试。
+
+## 5.1 失败分析
+
+120 Hz 候选的共同结果：内核可进入 `fps=120`，但屏幕黑屏或底部花屏。最终抓到的错误是：
+
+```text
+DSI_0: LLENGTH = 3400
+```
+
+候选已全部回滚，当前活动 `dtbo` 与 `dtbobak` 都是原厂 SHA-256 `307e7021…`。原厂启动日志恢复为真实的 90/72 Hz。
+
+失败原因包括：默认 Sharp 节点只有一个 `timing@0`；原生 timing 基准是 90 Hz；120 Hz 需要更高的 DSI bit clock；原节点没有 `panel-clockrate`；PHY 表是 993 MHz 链路的值；120 Hz 只有一段补充 TCON 命令，而不是完整的 LS026B3SA 120 Hz 初始化配置。通过 95/110 等非原生频率的实验还确认，驱动的命令集、timing 和 TCON 不能只靠改一个 framerate 数值解决。
+
+要继续 120 Hz，需要真正的 LS026B3SA 120 Hz timing 和 TCON/PHY 配置，或者匹配的 PICO 内核显示驱动源码。当前不建议继续盲写 DTBO。
 
 ## 6. 构建
 
@@ -853,6 +867,20 @@ adb shell su -c "dmesg | grep -oE 'entered rate:[0-9]+' | sort | uniq -c"
 
 **The choice has to be re-applied after a reboot.** SurfaceFlinger returns to its default config on every start and the empty-allowed-set problem in `DisplayModeDirector` remains. The module stores the choice in `Settings.Global` and reconciles it whenever PICO Settings starts; making it fully transparent needs the hook extended into `system_server`, which is not done.
 
+## 5.1 Failure analysis
+
+All 120 Hz candidates had the same outcome: the kernel entered `fps=120`, but the panel was black or showed a corrupted band at the bottom. The final low-level error captured was:
+
+```text
+DSI_0: LLENGTH = 3400
+```
+
+Every candidate has been rolled back. Both active `dtbo` and `dtbobak` are stock, with SHA-256 `307e7021…`. Stock boot logs again show genuine 90/72 Hz modes.
+
+The reasons are structural: the Sharp node has only one `timing@0`; its native base timing is 90 Hz; 120 Hz needs a higher DSI bit clock; the node has no `panel-clockrate`; its PHY table is for the 993 MHz link; and its 120 Hz entry is only a supplemental TCON command, not a complete LS026B3SA 120 Hz initialization set. Tests at 95/110 Hz also showed that changing one framerate value cannot make the command set, timing and TCON agree.
+
+A real 120 Hz attempt needs a panel-specific LS026B3SA 120 Hz timing and TCON/PHY configuration, or matching PICO kernel display-driver source. Blind DTBO writes are not recommended now.
+
 ## 6. Build
 
 ```bash
@@ -1324,6 +1352,20 @@ adb shell su -c "dmesg | grep -oE 'entered rate:[0-9]+' | sort | uniq -c"
 ```
 
 **После перезагрузки выбор нужно применить заново.** SurfaceFlinger при каждом старте возвращается к конфигурации по умолчанию, проблема пустого набора в `DisplayModeDirector` сохраняется. Модуль хранит выбор в `Settings.Global` и сверяет его при запуске настроек PICO; для полной незаметности нужно расширить хук на `system_server`, что не сделано.
+
+## 5.1 Анализ неудачи
+
+Все кандидаты 120 Гц дали один результат: ядро входило в `fps=120`, но панель оставалась чёрной или показывала искажённую полосу снизу. Последняя низкоуровневая ошибка:
+
+```text
+DSI_0: LLENGTH = 3400
+```
+
+Все кандидаты откатили. И активный `dtbo`, и `dtbobak` снова заводские; SHA-256 — `307e7021…`. Заводские журналы загрузки снова показывают настоящие режимы 90/72 Гц.
+
+Причина структурная: в узле Sharp есть только один `timing@0`; штатная базовая частота — 90 Гц; для 120 Гц нужна более высокая битовая частота DSI; в узле нет `panel-clockrate`; таблица PHY рассчитана на линию 993 МГц; а запись 120 Гц — лишь дополнительная команда TCON, а не полный набор инициализации LS026B3SA на 120 Гц. Эксперименты с 95/110 Гц также показали, что одной заменой framerate нельзя согласовать command set, timing и TCON.
+
+Для настоящих 120 Гц нужны отдельные тайминги LS026B3SA и конфигурация TCON/PHY либо исходники подходящего драйвера дисплея PICO. Продолжать слепую запись DTBO сейчас не рекомендуется.
 
 ## 6. Сборка
 
