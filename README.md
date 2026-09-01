@@ -130,7 +130,9 @@ PicolabFragment.onCheckedChanged(...)         刷新率开关 id = 0x7f0902c6
 `Utils.v1(boolean)` 的实际行为：
 
 ```java
-// s1() == true 表示该机型支持 120
+// s1() == Constant.i() && Constant.c()
+// Constant.i() 只在 ro.pvr.product.name == "FalconCV3" 时为真
+// PICO 4 是 Phoenix，所以 s1() == false，这一行选到的是 jdi49390
 String type = s1() ? "jdi493120" : "jdi49390";
 if (!enable) type = "jdi49372";
 
@@ -144,8 +146,9 @@ Utils.x1(enable);                             // 更新录屏帧率
 
 两个关键结论：
 
-1. 本机 `Utils.s1()` 返回 `true`，所以原生开关打开时走的是 **120**，不是 90。这也解释了“原来的 90 Hz 开关其实是 120”。
+1. 本机 `Utils.s1()` 实测返回 **`false`**（`ro.pvr.product.name` 是 `Phoenix`，不是 `FalconCV3`），所以原生开关只能在 72 与 **90** 之间切换，`Utils.v1(true)` 写入的是 `jdi49390`。**不能**用 `v1(true)` 来请求 120，否则实际写下去的是 90。本项目因此对三档都走显式 vendor 写入，并把 `s1()` hook 成 `true`，让 PICO 自己的界面文案与 DTBO 现在枚举出的 120 Hz 保持一致。
 2. **原生流程本身就要重启设备**。`K0()` 就是 `restartDevice`，不重启不会生效。
+
 
 ### 2.4 原生下拉菜单
 
@@ -173,16 +176,17 @@ Utils.x1(enable);                             // 更新录屏帧率
 | `PicolabFragment.onCheckedChanged(...)` | 拦截旧开关，避免二态语义与三档冲突 |
 | `PopupMenuHelper.c(...)` | 以锚点 id 识别刷新率弹窗，把菜单项替换为 `72 Hz / 90 Hz / 120 Hz`，并改写 `checkedPosition` |
 | `PicolabFragment$3.onItemClick(...)` | 拦截电源模式逻辑，改为按刷新率处理：写厂商状态 → 更新行文本 → 关闭弹窗 → 调用 `K0()` 重启 |
+| `Utils.s1()` | 强制返回 `true`，抵消 `Constant.i()` 只认 `FalconCV3` 的机型门 |
+| `SettingApplication.onCreate(...)` | 只读诊断探针，打印 `sdk_refreshRate`、`sdk_Recommand_refreshRate` 与两个属性的当前值 |
 
-三档请求路径：
+三档请求路径，全部显式写入，不依赖 `Utils.v1()` 的 `s1()` 判定：
 
 ```
-72  Hz  -> Utils.v1(false)
-120 Hz  -> Utils.v1(true)
-90  Hz  -> 显式 vendor 路径（不能用 v1(true)，否则会被映射成 120）
-             persist.pvr.display.type = jdi49390
-             sdk_refreshRate = 90 / sdk_Recommand_refreshRate = 90
-             Utils.P0 / Utils.B0 / Utils.w1(30)
+72  Hz  -> persist.pvr.display.type = jdi49372  + sdk_refreshRate = 72
+90  Hz  -> persist.pvr.display.type = jdi49390  + sdk_refreshRate = 90
+120 Hz  -> persist.pvr.display.type = jdi493120 + sdk_refreshRate = 120
+共同部分  sdk_Recommand_refreshRate 同步为同一值
+          Utils.P0 / Utils.B0 / Utils.w1(72 档 24，其余 30)
 ```
 
 模块不修改 PICO Settings 的 APK，不改资源，不动任何分区。禁用模块或移除作用域即可完全恢复原生界面。
@@ -225,7 +229,13 @@ Allowed Display Configs: 72Hz, (config override by backdoor: no)
 | 只 `setprop persist.pvr.display.type` + 重启 | 开机后被改回，无效 |
 | `Settings.Global["persist.pvr.display.type"]=120` + 重启 | 开机后仍被改回 `jdi49390` |
 
-根因：真正的持久化来源是 **PICO 配置服务** `com.pvr.configuration` 的 `sdk_refreshRate`，通过 `ConfigurationClientService` 读写；开机时由它覆盖 `persist.pvr.display.type`。今天两次重启都被改回 `jdi49390`，而 90 Hz 又没有对应的 DRM mode，于是 vendor 回落到 72 Hz。
+根因分两层，第二层是靠只读探针才查清的：
+
+1. **持久化来源是 PICO 配置服务。**真正跨重启生效的值是 `com.pvr.configuration` 里的 `sdk_refreshRate`，通过 `ConfigurationClientService` 读写；开机时它会覆盖 `persist.pvr.display.type`。所以单靠 `setprop` 或写 `Settings.Global` 都会在重启后被抹掉。
+2. **早期版本请求 120 时实际写下去的是 90。**`Utils.s1()` 实测为 `false`（`Constant.i()` 只认 `ro.pvr.product.name == "FalconCV3"`，而 PICO 4 是 `Phoenix`），因此 `Utils.v1(true)` 选中的是 `jdi49390`，配置服务里存的也是 90。重启后属性变回 `jdi49390` 正是这么来的，而 90 Hz 没有对应的 DRM mode，于是 vendor 回落到 72 Hz。
+
+第 2 点已经修好：现在三档都显式写入，120 档写的是 `jdi493120` 与 `sdk_refreshRate=120`。剩下要验证的是配置服务收到 120 之后，重启一次能否让 vsync 周期变成 `8333333 ns`。
+
 
 下一步：在模块里通过 `ConfigurationClientService` 正确写入 `sdk_refreshRate = 120`，再重启验证 vsync 周期是否变为 `8333333 ns`。
 
@@ -438,7 +448,9 @@ PicolabFragment.onCheckedChanged(...)         refresh switch id = 0x7f0902c6
 What `Utils.v1(boolean)` actually does:
 
 ```java
-// s1() == true means this unit is 120-capable
+// s1() == Constant.i() && Constant.c()
+// Constant.i() is true only for ro.pvr.product.name == "FalconCV3"
+// PICO 4 is Phoenix, so s1() == false and this line picks jdi49390
 String type = s1() ? "jdi493120" : "jdi49390";
 if (!enable) type = "jdi49372";
 
@@ -452,8 +464,9 @@ Utils.x1(enable);                             // updates recording fps
 
 Two important conclusions:
 
-1. `Utils.s1()` returns `true` on this unit, so the stock switch actually selects **120**, not 90. That is why "the old 90 Hz toggle is really 120".
+1. `Utils.s1()` was measured to return **`false`** on this unit (`ro.pvr.product.name` is `Phoenix`, not `FalconCV3`), so the stock switch only toggles between 72 and **90**, and `Utils.v1(true)` writes `jdi49390`. `v1(true)` therefore **cannot** be used to request 120 — it silently writes 90. This project writes all three rates explicitly and hooks `s1()` to `true` so PICO's own UI strings match the 120 Hz the DTBO now enumerates.
 2. **The stock flow itself reboots the device.** `K0()` is `restartDevice`; without a reboot nothing takes effect.
+
 
 ### 2.4 The native dropdown
 
@@ -481,16 +494,17 @@ Package `com.picoxr.refreshselector`, scoped to `com.picovr.settings` **only**.
 | `PicolabFragment.onCheckedChanged(...)` | Blocks the old switch so two-state semantics cannot fight the three-way choice |
 | `PopupMenuHelper.c(...)` | Recognises the refresh popup by anchor id, replaces the items with `72 Hz / 90 Hz / 120 Hz` and rewrites `checkedPosition` |
 | `PicolabFragment$3.onItemClick(...)` | Replaces power-mode handling with rate handling: write vendor state, update the row label, dismiss the popup, call `K0()` to reboot |
+| `Utils.s1()` | Forced to `true`, cancelling the model gate where `Constant.i()` only accepts `FalconCV3` |
+| `SettingApplication.onCreate(...)` | Read-only probe that logs `sdk_refreshRate`, `sdk_Recommand_refreshRate` and both properties |
 
-Request paths:
+Request paths, all written explicitly instead of relying on the `s1()` decision inside `Utils.v1()`:
 
 ```
-72  Hz  -> Utils.v1(false)
-120 Hz  -> Utils.v1(true)
-90  Hz  -> explicit vendor path (v1(true) would be mapped to 120)
-             persist.pvr.display.type = jdi49390
-             sdk_refreshRate = 90 / sdk_Recommand_refreshRate = 90
-             Utils.P0 / Utils.B0 / Utils.w1(30)
+72  Hz  -> persist.pvr.display.type = jdi49372  + sdk_refreshRate = 72
+90  Hz  -> persist.pvr.display.type = jdi49390  + sdk_refreshRate = 90
+120 Hz  -> persist.pvr.display.type = jdi493120 + sdk_refreshRate = 120
+shared     sdk_Recommand_refreshRate mirrors the same value
+           Utils.P0 / Utils.B0 / Utils.w1(24 for 72 Hz, 30 otherwise)
 ```
 
 The module never patches the PICO Settings APK, never touches resources and never writes a partition. Disabling the module or removing its scope fully restores the stock UI.
@@ -533,7 +547,13 @@ Ruled out so far:
 | `setprop persist.pvr.display.type` + reboot | Overwritten during boot |
 | `Settings.Global["persist.pvr.display.type"]=120` + reboot | Still reverted to `jdi49390` after boot |
 
-Root cause: the authoritative store is `sdk_refreshRate` in the **PICO configuration service** `com.pvr.configuration`, accessed through `ConfigurationClientService`. It overwrites `persist.pvr.display.type` at boot. Both reboots reverted to `jdi49390`, and since 90 Hz has no DRM mode, the vendor path falls back to 72 Hz.
+The root cause has two layers, and the second one only surfaced through the read-only probe:
+
+1. **The persisted value lives in the PICO configuration service.** What actually survives a reboot is `sdk_refreshRate` inside `com.pvr.configuration`, accessed through `ConfigurationClientService`; it overwrites `persist.pvr.display.type` during boot. A bare `setprop` or a `Settings.Global` write is therefore wiped on the next boot.
+2. **Earlier builds wrote 90 when 120 was requested.** `Utils.s1()` measures as `false` (`Constant.i()` only accepts `ro.pvr.product.name == "FalconCV3"`, and PICO 4 is `Phoenix`), so `Utils.v1(true)` selects `jdi49390` and stores 90 in the configuration service. That is exactly why the property reverted to `jdi49390` after a reboot, and since 90 Hz has no DRM mode the vendor path falls back to 72 Hz.
+
+Item 2 is fixed: all three rates are now written explicitly and the 120 entry writes `jdi493120` with `sdk_refreshRate=120`. What remains to be verified is whether the configuration service, once it holds 120, makes the vsync period become `8333333 ns` after one reboot.
+
 
 Next step: write `sdk_refreshRate = 120` through `ConfigurationClientService` from the module, reboot, and check whether the vsync period becomes `8333333 ns`.
 
@@ -746,7 +766,9 @@ PicolabFragment.onCheckedChanged(...)         id переключателя = 0x
 Что делает `Utils.v1(boolean)`:
 
 ```java
-// s1() == true означает, что экземпляр поддерживает 120
+// s1() == Constant.i() && Constant.c()
+// Constant.i() истинно только при ro.pvr.product.name == "FalconCV3"
+// PICO 4 — это Phoenix, поэтому s1() == false и здесь выбирается jdi49390
 String type = s1() ? "jdi493120" : "jdi49390";
 if (!enable) type = "jdi49372";
 
@@ -760,8 +782,9 @@ Utils.x1(enable);                             // частота записи э�
 
 Два ключевых вывода:
 
-1. На этом устройстве `Utils.s1()` возвращает `true`, поэтому заводской переключатель выбирает **120**, а не 90. Именно поэтому «старый переключатель 90 Гц» фактически даёт 120.
+1. Замер показал, что на этом устройстве `Utils.s1()` возвращает **`false`** (`ro.pvr.product.name` — `Phoenix`, а не `FalconCV3`), поэтому заводской переключатель работает только между 72 и **90**, а `Utils.v1(true)` записывает `jdi49390`. Использовать `v1(true)` для запроса 120 **нельзя** — фактически запишется 90. Проект записывает все три частоты явно и подменяет `s1()` на `true`, чтобы тексты интерфейса PICO соответствовали 120 Гц, которые теперь перечисляет DTBO.
 2. **Заводской сценарий сам перезагружает устройство.** `K0()` — это `restartDevice`; без перезагрузки изменение не применяется.
+
 
 ### 2.4 Нативное выпадающее меню
 
@@ -789,16 +812,17 @@ Utils.x1(enable);                             // частота записи э�
 | `PicolabFragment.onCheckedChanged(...)` | Блокирует старый переключатель, чтобы двоичная логика не конфликтовала с тремя вариантами |
 | `PopupMenuHelper.c(...)` | Определяет попап частоты по id якоря, заменяет элементы на `72 Hz / 90 Hz / 120 Hz` и переписывает `checkedPosition` |
 | `PicolabFragment$3.onItemClick(...)` | Вместо логики режимов питания обрабатывает частоту: запись состояния, обновление подписи, закрытие попапа, вызов `K0()` |
+| `Utils.s1()` | Принудительно `true`, чтобы обойти проверку модели, где `Constant.i()` принимает только `FalconCV3` |
+| `SettingApplication.onCreate(...)` | Диагностический зонд только для чтения: печатает `sdk_refreshRate`, `sdk_Recommand_refreshRate` и оба свойства |
 
-Пути запроса:
+Пути запроса — все три записываются явно, без опоры на проверку `s1()` внутри `Utils.v1()`:
 
 ```
-72  Гц  -> Utils.v1(false)
-120 Гц  -> Utils.v1(true)
-90  Гц  -> явный вендорный путь (v1(true) был бы отражён в 120)
-             persist.pvr.display.type = jdi49390
-             sdk_refreshRate = 90 / sdk_Recommand_refreshRate = 90
-             Utils.P0 / Utils.B0 / Utils.w1(30)
+72  Гц  -> persist.pvr.display.type = jdi49372  + sdk_refreshRate = 72
+90  Гц  -> persist.pvr.display.type = jdi49390  + sdk_refreshRate = 90
+120 Гц  -> persist.pvr.display.type = jdi493120 + sdk_refreshRate = 120
+общее      sdk_Recommand_refreshRate получает то же значение
+           Utils.P0 / Utils.B0 / Utils.w1(24 для 72 Гц, иначе 30)
 ```
 
 Модуль не патчит APK настроек PICO, не меняет ресурсы и не пишет в разделы. Отключение модуля или снятие области действия полностью восстанавливает штатный интерфейс.
@@ -841,7 +865,13 @@ Allowed Display Configs: 72Hz, (config override by backdoor: no)
 | `setprop persist.pvr.display.type` + перезагрузка | Перезаписывается при загрузке |
 | `Settings.Global["persist.pvr.display.type"]=120` + перезагрузка | После загрузки снова `jdi49390` |
 
-Первопричина: авторитетное хранилище — `sdk_refreshRate` в **службе конфигурации PICO** `com.pvr.configuration`, доступной через `ConfigurationClientService`. При загрузке она перезаписывает `persist.pvr.display.type`. Обе перезагрузки вернули `jdi49390`, а поскольку для 90 Гц нет режима DRM, вендорный путь откатился на 72 Гц.
+Первопричина состоит из двух слоёв, и второй выявился только благодаря зонду только для чтения:
+
+1. **Сохраняемое значение хранится в службе конфигурации PICO.** Перезагрузку переживает `sdk_refreshRate` внутри `com.pvr.configuration`, доступный через `ConfigurationClientService`; при загрузке он перезаписывает `persist.pvr.display.type`. Поэтому простой `setprop` или запись в `Settings.Global` стираются при следующей загрузке.
+2. **Ранние сборки записывали 90, когда запрашивались 120.** Замер показал, что `Utils.s1()` возвращает `false` (`Constant.i()` принимает только `ro.pvr.product.name == "FalconCV3"`, а PICO 4 — `Phoenix`), поэтому `Utils.v1(true)` выбирал `jdi49390` и сохранял 90 в службе конфигурации. Именно поэтому свойство после перезагрузки возвращалось к `jdi49390`, а так как для 90 Гц нет режима DRM, вендорный путь откатывался на 72 Гц.
+
+Пункт 2 исправлен: теперь все три частоты записываются явно, а вариант 120 пишет `jdi493120` и `sdk_refreshRate=120`. Осталось проверить, приведёт ли одна перезагрузка с сохранённым значением 120 к периоду vsync `8333333 ns`.
+
 
 Следующий шаг: записать `sdk_refreshRate = 120` через `ConfigurationClientService` из модуля, перезагрузиться и проверить, стал ли период vsync равен `8333333 ns`.
 

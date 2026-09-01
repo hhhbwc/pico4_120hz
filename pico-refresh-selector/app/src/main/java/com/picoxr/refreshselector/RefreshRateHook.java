@@ -47,9 +47,81 @@ public final class RefreshRateHook implements IXposedHookLoadPackage {
             hookRefreshDropdown(lp.classLoader);
             hookPopupBuilder(lp.classLoader);
             hookPopupClick(lp.classLoader);
+            hookVendorStateProbe(lp.classLoader);
+            hookCapabilityGate(lp.classLoader);
             XposedBridge.log(TAG + ": installed native PICO refresh popup hooks");
         } catch (Throwable error) {
             XposedBridge.log(TAG + ": hook installation failed: " + error);
+        }
+    }
+
+    // Constant.i() only reports 120 Hz capability for ro.pvr.product.name
+    // "FalconCV3", so on Phoenix every stock string and branch degrades 120 to
+    // 90. Reporting the unit as capable keeps the vendor UI text consistent
+    // with the DTBO that now enumerates 120 Hz.
+    private static void hookCapabilityGate(final ClassLoader loader) {
+        try {
+            XposedHelpers.findAndHookMethod(
+                    XposedHelpers.findClass("com.picovr.utils.Utils", loader), "s1",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            param.setResult(Boolean.TRUE);
+                        }
+                    });
+            XposedBridge.log(TAG + ": forced 120-capable capability gate");
+        } catch (Throwable error) {
+            XposedBridge.log(TAG + ": capability gate hook failed: " + error);
+        }
+    }
+
+    // Read-only diagnostics. The refresh rate that survives a reboot comes from
+    // the PICO configuration service, not from persist.pvr.display.type, so the
+    // stored keys have to be observable before anything else can be trusted.
+    private static void hookVendorStateProbe(final ClassLoader loader) {
+        Class<?> application = XposedHelpers.findClass(
+                "com.picovr.settings.SettingApplication", loader);
+        XposedHelpers.findAndHookMethod(application, "onCreate", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                new Thread(() -> {
+                    try {
+                        Thread.sleep(4000);
+                    } catch (InterruptedException ignored) {
+                        return;
+                    }
+                    logVendorState(loader);
+                }, "PicoRefreshProbe").start();
+            }
+        });
+    }
+
+    private static void logVendorState(ClassLoader loader) {
+        XposedBridge.log(TAG + ": --- vendor state probe ---");
+        logConfigValue(loader, "sdk_refreshRate");
+        logConfigValue(loader, "sdk_Recommand_refreshRate");
+        XposedBridge.log(TAG + ": prop persist.pvr.display.type="
+                + getProperty("persist.pvr.display.type", "?"));
+        XposedBridge.log(TAG + ": prop sys.pvr.display.type="
+                + getProperty("sys.pvr.display.type", "?"));
+        try {
+            Object utils = XposedHelpers.findClass("com.picovr.utils.Utils", loader);
+            XposedBridge.log(TAG + ": Utils.s1() (120-capable)="
+                    + XposedHelpers.callStaticMethod((Class<?>) utils, "s1"));
+        } catch (Throwable error) {
+            XposedBridge.log(TAG + ": Utils.s1() read failed: " + error);
+        }
+        XposedBridge.log(TAG + ": --- end probe ---");
+    }
+
+    private static void logConfigValue(ClassLoader loader, String key) {
+        try {
+            Object value = XposedHelpers.callStaticMethod(
+                    XposedHelpers.findClass("com.picovr.utils.ConfigServiceManager", loader),
+                    "f", key, "<unset>");
+            XposedBridge.log(TAG + ": config " + key + "=" + value);
+        } catch (Throwable error) {
+            XposedBridge.log(TAG + ": config " + key + " read failed: " + error);
         }
     }
 
@@ -283,22 +355,43 @@ public final class RefreshRateHook implements IXposedHookLoadPackage {
             Context context = (Context) XposedHelpers.callStaticMethod(
                     XposedHelpers.findClass("com.picovr.settings.SettingApplication", loader),
                     "b");
-            Class<?> utils = XposedHelpers.findClass("com.picovr.utils.Utils", loader);
-            if (rate == 72) {
-                XposedHelpers.callStaticMethod(utils, "v1", false);
-            } else if (rate == 120) {
-                XposedHelpers.callStaticMethod(utils, "v1", true);
-            } else if (rate == 90) {
-                applyExplicit90(context, loader);
-            } else {
-                throw new IllegalArgumentException("Unsupported refresh rate: " + rate);
-            }
-
+            applyVendorRate(context, rate, loader);
             Settings.Global.putInt(context.getContentResolver(), CHOICE_KEY, rate);
             XposedBridge.log(TAG + ": requested " + rate + " Hz");
         } catch (Throwable error) {
             XposedBridge.log(TAG + ": rate request failed: " + error);
         }
+    }
+
+    // Utils.v1(boolean) cannot be reused for the upper rate. It picks the panel
+    // type from Utils.s1(), which is Constant.i() && Constant.c(), and
+    // Constant.i() only accepts ro.pvr.product.name == "FalconCV3". On Phoenix
+    // it returns false, so v1(true) writes jdi49390 instead of jdi493120.
+    // Every rate is therefore propagated explicitly here.
+    private static void applyVendorRate(Context context, int rate, ClassLoader loader) {
+        String type;
+        switch (rate) {
+            case 72:  type = "jdi49372";  break;
+            case 90:  type = "jdi49390";  break;
+            case 120: type = "jdi493120"; break;
+            default: throw new IllegalArgumentException("Unsupported refresh rate: " + rate);
+        }
+        String value = Integer.toString(rate);
+
+        XposedHelpers.callStaticMethod(
+                XposedHelpers.findClass("com.pvr.common.CommonUtils", loader),
+                "setSystemProperties", "persist.pvr.display.type", type);
+
+        Class<?> config = XposedHelpers.findClass("com.picovr.utils.ConfigServiceManager", loader);
+        XposedHelpers.callStaticMethod(config, "i", "sdk_refreshRate", value);
+        XposedHelpers.callStaticMethod(config, "i", "sdk_Recommand_refreshRate", value);
+
+        Class<?> utils = XposedHelpers.findClass("com.picovr.utils.Utils", loader);
+        XposedHelpers.callStaticMethod(utils, "P0", "persist.pvr.display.type", rate);
+        XposedHelpers.callStaticMethod(utils, "B0", "com.pvr.display.type", rate);
+        XposedHelpers.callStaticMethod(utils, "w1", rate == 72 ? 24 : 30);
+
+        XposedBridge.log(TAG + ": vendor state -> " + type + ", sdk_refreshRate=" + value);
     }
 
     // The stock refresh-rate switch only takes effect after the reboot that
@@ -310,25 +403,6 @@ public final class RefreshRateHook implements IXposedHookLoadPackage {
         } catch (Throwable error) {
             XposedBridge.log(TAG + ": restart request failed: " + error);
         }
-    }
-    
-    private static void applyExplicit90(Context context, ClassLoader loader) throws Exception {
-        Class<?> commonUtils = XposedHelpers.findClass("com.pvr.common.CommonUtils", loader);
-        XposedHelpers.callStaticMethod(commonUtils, "setSystemProperties",
-                "persist.pvr.display.type", "jdi49390");
-
-        Class<?> config = XposedHelpers.findClass("com.picovr.utils.ConfigServiceManager", loader);
-        XposedHelpers.callStaticMethod(config, "i", "sdk_refreshRate", "90");
-        XposedHelpers.callStaticMethod(config, "i", "sdk_Recommand_refreshRate", "90");
-
-        XposedHelpers.callStaticMethod(
-                XposedHelpers.findClass("com.picovr.utils.Utils", loader),
-                "P0", "persist.pvr.display.type", 90);
-        XposedHelpers.callStaticMethod(
-                XposedHelpers.findClass("com.picovr.utils.Utils", loader),
-                "B0", "com.pvr.display.type", 90);
-        XposedHelpers.callStaticMethod(
-                XposedHelpers.findClass("com.picovr.utils.Utils", loader), "w1", 30);
     }
 
     private static void dismissPopup(Object fragment) {
