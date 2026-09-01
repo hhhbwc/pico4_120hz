@@ -30,6 +30,10 @@ public final class RefreshRateHook implements IXposedHookLoadPackage {
     private static final String SETTINGS_PACKAGE = "com.picovr.settings";
     private static final int REFRESH_SWITCH_ID = 0x7f0902c6;
     private static final String CHOICE_KEY = "pico_refresh_selector_choice";
+    // The stock flow reboots straight after the selection. Staging the vendor
+    // state and leaving the reboot to the user keeps the timing under control
+    // and makes it possible to confirm the write before restarting.
+    private static final String AUTO_RESTART_KEY = "pico_refresh_selector_auto_restart";
     private static final int[] RATES = {72, 90, 120};
 
     private static final ThreadLocal<Boolean> OPENING_REFRESH_MENU = new ThreadLocal<>();
@@ -272,7 +276,14 @@ public final class RefreshRateHook implements IXposedHookLoadPackage {
                             updateDropdownText(fragment, rate, loader);
                             dismissPopup(fragment);
                             if (rate != previous) {
-                                scheduleRestart(fragment);
+                                Context context = row == null ? null : row.getContext();
+                                if (context != null && !autoRestartEnabled(context)) {
+                                    XposedBridge.log(TAG + ": staged " + rate
+                                            + " Hz, reboot manually to apply (set "
+                                            + AUTO_RESTART_KEY + "=1 to reboot automatically)");
+                                } else {
+                                    scheduleRestart(fragment);
+                                }
                             }
                         }
                     }
@@ -392,6 +403,10 @@ public final class RefreshRateHook implements IXposedHookLoadPackage {
         XposedHelpers.callStaticMethod(utils, "w1", rate == 72 ? 24 : 30);
 
         XposedBridge.log(TAG + ": vendor state -> " + type + ", sdk_refreshRate=" + value);
+    }
+
+    private static boolean autoRestartEnabled(Context context) {
+        return Settings.Global.getInt(context.getContentResolver(), AUTO_RESTART_KEY, 0) == 1;
     }
 
     // The stock refresh-rate switch only takes effect after the reboot that
