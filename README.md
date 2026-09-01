@@ -373,6 +373,14 @@ adb shell su -c "dmesg | grep -oE 'entered rate:[0-9]+' | sort | uniq -c"
 
 **重启后需要重新应用。**SurfaceFlinger 每次启动都回到默认配置，`DisplayModeDirector` 的空集合问题依然存在。模块把选择记在 `Settings.Global`，每次 PICO Settings 启动时比对并补上；要完全无感需要把 hook 扩展到 `system_server`，还没做。
 
+## 5.1 当前设备状态与结论
+
+设备当前已恢复原厂活动 DTBO，回读 SHA-256 为 `307e702182e731b76e8bc0a4aec131a53e1ddf82e96f2f416e2f49129e6d46ac`；`dtbobak` 同样保持原厂。原厂 Sharp LS026B3SA 节点重新公开真实的 90/72 Hz 模式。
+
+继续对比 DTBO 后确认，Sharp LS026B3SA 节点只有一个 `timing@0`，没有独立的 120 Hz `timing@1`，也没有 `qcom,mdss-dsi-panel-clockrate`。同一节点里虽然存在 `post-120-nt57900-on-command`，但它只是按刷新率命名的 53 字节补充命令；它不能替代完整的 120 Hz timing、PHY、时钟和 TCON 初始化配置。
+
+同一份 DTBO 中的 `sharp_493_120_new_video` 是另一块 960×3664 面板，带独立 GPIO/PWM、不同 DSC 拓扑和完整 120 Hz timing，不能直接复制到 4320×2160 的 LS026B3SA。后续若继续 120 Hz，必须针对 LS026B3SA 单独构造完整的 120 Hz timing 和 TCON 初始化序列；目前没有可靠的厂商参考，继续写分区只是在盲试。
+
 ## 6. 构建
 
 ```bash

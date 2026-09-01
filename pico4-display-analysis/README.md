@@ -127,3 +127,11 @@ On recovery: although `ro.boot.flash.locked=0`, **this device's fastboot has the
 | `edl-readonly-lun4-gpt-dtbo.xml` | Firehose **只读**回读配置，LUN4 上的 `gpt_header` 与 `dtbo` |
 
 `edl-readonly-lun4-gpt-dtbo.xml` 只用于回读验证，不含任何写入操作。EDL 必须使用物理 USB 连接。
+
+## 当前结论 / Current conclusion / Текущий вывод
+
+The stock active DTBO has been restored after the 120 Hz timing experiments. The read-back hash is `307e702182e731b76e8bc0a4aec131a53e1ddf82e96f2f416e2f49129e6d46ac`, and `dtbobak` remains unchanged. The Sharp LS026B3SA node exposes its genuine 90/72 Hz modes again.
+
+The node has one `timing@0`, no independent 120 Hz `timing@1`, and no `qcom,mdss-dsi-panel-clockrate`. Its `post-120-nt57900-on-command` is only a rate-named 53-byte supplemental command. It is not a complete 120 Hz panel configuration. The `sharp_493_120_new_video` node in the same DTBO belongs to a different 960x3664 panel with different GPIO, PWM, DSC topology and timings, so it cannot be copied to LS026B3SA.
+
+A real 120 Hz attempt therefore requires a panel-specific timing, clock, PHY and TCON initialization set. No such vendor-validated set has been found yet; further partition writes would be blind experiments.
