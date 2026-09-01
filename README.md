@@ -10,11 +10,11 @@
 
 > **当前状态 / Current status / Текущий статус**
 >
-> 120 Hz 已经被 DRM 和 Android 枚举，但面板**尚未真正运行在 120 Hz**。请先读[已知阻塞点](#5-已知阻塞点)。
+> 120 Hz **已经实测生效**，运行时即时切换，无需重启（`VSYNC period: 8333333 ns`）。90 Hz 暂不可用。见[实测结果](#4-已验证的结果)。
 >
-> 120 Hz is enumerated by DRM and Android, but the panel is **not actually running at 120 Hz yet**. See [known blocker](#5-known-blocker).
+> 120 Hz **is confirmed working**, switched live without a reboot (`VSYNC period: 8333333 ns`). 90 Hz is not available yet. See [verified results](#4-verified-results).
 >
-> 120 Гц перечисляется DRM и Android, но панель **пока не работает на 120 Гц**. См. [известную блокировку](#5-известная-блокировка).
+> 120 Гц **подтверждённо работают**, переключение на ходу без перезагрузки (`VSYNC period: 8333333 ns`). 90 Гц пока недоступны. См. [подтверждённые результаты](#4-подтверждённые-результаты).
 
 ---
 
@@ -166,6 +166,44 @@ Utils.x1(enable);                             // 更新录屏帧率
 
 勾选状态由传入的 `checkedPosition` 决定，不保存在 `MenuItemData` 内部。
 
+### 2.5 SurfaceFlinger 的私有校验
+
+即使 DTBO 已经让 120 Hz 成为 DRM 与 Android 的合法模式，Android 框架仍然会把面板钉在 72 Hz：
+
+```
+E DisplayModeDirector: Asked about unknown display, returning empty allowed set! (id=0)
+F DEBUG: #08 libsurfaceflinger.so (SurfaceFlinger::setAllowedDisplayConfigs(...))
+```
+
+`DisplayModeDirector` 不认识 display 0，返回空的允许集合；这个空集合传给 SurfaceFlinger 后触发越界，开机时把它崩掉两次，SF 恢复后退回默认配置。
+
+而标准接口全部被静默拒绝：
+
+```
+setAllowedDisplayConfigs({0})   -> 返回成功，状态不变
+setActiveConfig(0)              -> 返回成功，状态不变
+service call SurfaceFlinger 1035 i32 0 -> BAD_VALUE (-22)
+```
+
+反汇编 `/system/lib64/libsurfaceflinger.so` 找到了原因，PICO 在这个函数里加了一道私有校验：
+
+```asm
+0xfad78  ldr  w10, [x9]        ; 遍历 allowedConfigs
+0xfad7c  cmp  w10, #3          ; 是否存在等于 3 的元素
+0xfad80  b.eq #0xfadac         ; 存在 → has pico parameter，放行
+0xfadb8  b.eq #0xfae5c         ; 不存在 → no pico parameter
+0xfae6c  mov  w19, #-0x16      ;          返回 -22 (BAD_VALUE)
+0xfadd4  sub  x8, x8, #4       ; 放行后把末尾的标记弹出
+```
+
+数组里必须携带魔数 `3`，且因为它会被从末尾弹出，标记必须放在最后：
+
+```java
+SurfaceControl.setAllowedDisplayConfigs(token, new int[] {configIndex, 3});
+```
+
+日志里那句 `no pico parameter so allow to change display config through surfaceflinger` 措辞有误，实际含义是**不放行**。
+
 ## 3. 模块做了什么
 
 模块包名 `com.picoxr.refreshselector`，作用域**仅** `com.picovr.settings`。
@@ -177,6 +215,7 @@ Utils.x1(enable);                             // 更新录屏帧率
 | `PopupMenuHelper.c(...)` | 以锚点 id 识别刷新率弹窗，把菜单项替换为 `72 Hz / 90 Hz / 120 Hz`，并改写 `checkedPosition` |
 | `PicolabFragment$3.onItemClick(...)` | 拦截电源模式逻辑，改为按刷新率处理：写厂商状态 → 更新行文本 → 关闭弹窗 → 调用 `K0()` 重启 |
 | `Utils.s1()` | 强制返回 `true`，抵消 `Constant.i()` 只认 `FalconCV3` 的机型门 |
+| `SurfaceControl.setAllowedDisplayConfigs` | 带上 PICO 魔数 `3` 调用，实现运行时即时切换，无需重启 |
 | `SettingApplication.onCreate(...)` | 只读诊断探针，打印 `sdk_refreshRate`、`sdk_Recommand_refreshRate` 与两个属性的当前值 |
 
 三档请求路径，全部显式写入，不依赖 `Utils.v1()` 的 `s1()` 判定：
@@ -187,7 +226,10 @@ Utils.x1(enable);                             // 更新录屏帧率
 120 Hz  -> persist.pvr.display.type = jdi493120 + sdk_refreshRate = 120
 共同部分  sdk_Recommand_refreshRate 同步为同一值
           Utils.P0 / Utils.B0 / Utils.w1(72 档 24，其余 30)
+          setAllowedDisplayConfigs(token, {configIndex, 3})  ← 立即生效
 ```
+
+菜单只列出真实存在的 display config，因此当前是 72 与 120。切换成功即时生效；只有在 live 切换失败时才会退回"需要重启"的提示，此时可用 `pico_refresh_selector_auto_restart=1` 恢复原生的自动重启行为。
 
 模块不修改 PICO Settings 的 APK，不改资源，不动任何分区。禁用模块或移除作用域即可完全恢复原生界面。
 
@@ -195,49 +237,54 @@ Utils.x1(enable);                             // 更新录屏帧率
 
 - 候选 DTBO 刷入后设备正常启动，ADB 稳定，无显示异常。
 - 120 Hz 出现在 DRM `modes` 与 Android `supportedModes` 中。
+- **120 Hz 实测生效，且是运行时切换，无需重启：**
+
+```
+VSYNC period:   8333333 ns          # = 120 Hz
+Allowed Display Configs: 120Hz
+refresh-rate:   120.000005 fps
+```
+
+- 内核确认面板本身完全能承受 120 Hz，开机时它就是以 120 Hz 点亮的，7 秒后才被框架改回 72：
+
+```
+[ 6.497391] dsi_display_set_mode: hactive=4320, vactive=2160, fps=120
+[13.597112] dsi_display_set_mode: hactive=4320, vactive=2160, fps=72
+```
+
+  全程没有 DSI/DSC/PLL/underrun 报错。
+
 - EDL(9008) 只读回读的 `dtbo` 与 `dtbobak` 均与 ADB 基线**逐字节一致**，回滚路径可用。
-- 下拉菜单在头显中正常显示，三档均可点击，弹窗点击后自动关闭，行文本随选择更新。
-- Vector 日志确认 Hook 加载与请求下发：
+- 下拉菜单在头显中正常显示，点击后弹窗自动关闭，行文本随选择更新。
+- 厂商状态跨重启保持，配置服务里存的就是 120：
 
 ```
-PicoRefreshSelector: installed native PICO refresh popup hooks
-PicoRefreshSelector: injected native popup rates=[72, 90, 120]
-PicoRefreshSelector: requested 120 Hz
-PicoRefreshSelector: dismissed refresh popup
+config sdk_refreshRate=120
+config sdk_Recommand_refreshRate=120
+prop persist.pvr.display.type=jdi493120
+prop sys.pvr.display.type=120.000000
 ```
 
-## 5. 已知阻塞点
+## 5. 已知限制
 
-**面板目前仍运行在 72 Hz。**不要根据日志里的 `requested 120 Hz` 判断成功，那只表示请求已下发。
-
-判定依据只有硬件 vsync 周期：
+**90 Hz 不可用。**原始 DFPS 列表是 `<90 72>`，改成 `<120 90 72>` 后 DRM 只公开了 120 与 72，中间的 90 没有注册成独立 mode，启动日志给出原因：
 
 ```
-$ adb shell dumpsys SurfaceFlinger | grep -E "VSYNC period|Allowed Display"
-    present offset: 0 ns     VSYNC period: 13888888 ns      # = 72 Hz
-Allowed Display Configs: 72Hz, (config override by backdoor: no)
+Invalid new_hfp calcluated-499
 ```
 
-已排除的路径：
+Qualcomm DSI 的 DFPS 路径为中间刷新率计算 horizontal front porch 时失败。因此菜单按实际存在的 display config 生成，目前只有 72 与 120；等中间时序修好，90 会自动出现，不需要改代码。
 
-| 尝试 | 结果 |
-| --- | --- |
-| `Display.setUserPreferredDisplayMode(...)` | Android 10 上不存在该方法 |
-| `Settings.Global` 的 `peak_refresh_rate` / `min_refresh_rate` | 写入成功但无效，SurfaceFlinger 仍只允许 72 Hz |
-| `service call SurfaceFlinger 1035 i32 0`（配置后门） | 返回 `BAD_VALUE (-22)`，PICO 关闭了 Android 层刷新率切换 |
-| `service call SurfaceFlinger 1036` | 返回 `PERMISSION_DENIED` |
-| 只 `setprop persist.pvr.display.type` + 重启 | 开机后被改回，无效 |
-| `Settings.Global["persist.pvr.display.type"]=120` + 重启 | 开机后仍被改回 `jdi49390` |
+**重启后需要重新应用。**SurfaceFlinger 每次启动都会回到默认配置，而 `DisplayModeDirector` 那个空集合的问题依然存在。模块的做法是把选择记在 `Settings.Global`，每次 PICO Settings 启动时比对一次并自动补上：
 
-根因分两层，第二层是靠只读探针才查清的：
+```
+PicoRefreshSelector: restoring stored choice 120 Hz
+PicoRefreshSelector: 120 Hz already active
+```
 
-1. **持久化来源是 PICO 配置服务。**真正跨重启生效的值是 `com.pvr.configuration` 里的 `sdk_refreshRate`，通过 `ConfigurationClientService` 读写；开机时它会覆盖 `persist.pvr.display.type`。所以单靠 `setprop` 或写 `Settings.Global` 都会在重启后被抹掉。
-2. **早期版本请求 120 时实际写下去的是 90。**`Utils.s1()` 实测为 `false`（`Constant.i()` 只认 `ro.pvr.product.name == "FalconCV3"`，而 PICO 4 是 `Phoenix`），因此 `Utils.v1(true)` 选中的是 `jdi49390`，配置服务里存的也是 90。重启后属性变回 `jdi49390` 正是这么来的，而 90 Hz 没有对应的 DRM mode，于是 vendor 回落到 72 Hz。
+也就是说重启后进一次设置即可恢复。要做到完全无感，需要把 hook 扩展到 `system_server`（`android` 作用域）去修 `DisplayModeDirector.getAllowedModes()`，这一步还没做。
 
-第 2 点已经修好：现在三档都显式写入，120 档写的是 `jdi493120` 与 `sdk_refreshRate=120`。剩下要验证的是配置服务收到 120 之后，重启一次能否让 vsync 周期变成 `8333333 ns`。
-
-
-下一步：在模块里通过 `ConfigurationClientService` 正确写入 `sdk_refreshRate = 120`，再重启验证 vsync 周期是否变为 `8333333 ns`。
+**不要用日志判断成功。**`requested 120 Hz` 只代表请求已下发；PICO 自己的 `PxrCompositor: setRefreshRate:120.000000, current rate: 120.000000` 也只是回读 `sys.pvr.display.type` 这个属性，不是面板实际状态。唯一可信的判据是 `VSYNC period`。
 
 ## 6. 构建
 
@@ -255,6 +302,16 @@ cd pico-refresh-selector
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 # 在 Vector / LSPosed 中启用模块，作用域只勾选 com.picovr.settings
 adb shell su -c "am force-stop com.picovr.settings"
+```
+
+可选开关，都存在 `Settings.Global` 里：
+
+```bash
+# 运行时即时切换，默认开启；设为 0 则退回"改配置 + 重启"的方式
+adb shell settings put global pico_refresh_selector_live_switch 1
+
+# live 切换失败时是否沿用 PICO 原生的自动重启，默认关闭
+adb shell settings put global pico_refresh_selector_auto_restart 0
 ```
 
 确认 Hook 已加载：
@@ -277,10 +334,13 @@ adb shell su -c "cat /sys/class/drm/card0-DSI-1/modes"
 adb shell dumpsys display | grep -m1 "内置屏幕"
 
 # 唯一可信的实际刷新率判据
-adb shell dumpsys SurfaceFlinger | grep "VSYNC period"
+adb shell dumpsys SurfaceFlinger | grep -E "VSYNC period|Allowed Display"
 #   13888888 ns = 72 Hz
 #   11111111 ns = 90 Hz
 #    8333333 ns = 120 Hz
+
+# 模块记录的选择，重启后据此自动恢复
+adb shell settings get global pico_refresh_selector_choice
 
 # 内核显示日志
 adb shell su -c "dmesg | grep -iE 'dfps|dsi|underrun|hfp|pll'"
@@ -325,7 +385,9 @@ docs/
 - [x] 让 120 Hz 被 DRM 与 Android 枚举
 - [x] 复用 PICO 原生下拉菜单实现三档选择
 - [x] 定位原生流程依赖重启的事实
-- [ ] 通过 `ConfigurationClientService` 写入 `sdk_refreshRate`，让 120 Hz 真正生效
+- [x] 通过配置服务写入 `sdk_refreshRate`，让厂商状态跨重启保持
+- [x] 逆向出 SurfaceFlinger 私有校验，实现 120 Hz 运行时即时切换
+- [ ] 扩展到 `system_server` 修正 `DisplayModeDirector`，做到开机自动生效
 - [ ] 修正中间时序，使 90 Hz 成为独立 DRM mode
 - [ ] 提供 Magisk 模块形式的一键安装
 
@@ -484,6 +546,44 @@ click     PicolabFragment$3.onItemClick(AdapterView, View, int, long)
 
 The check mark comes from the `checkedPosition` argument; it is not stored inside `MenuItemData`.
 
+### 2.5 SurfaceFlinger's private check
+
+Even with the DTBO exposing 120 Hz as a valid DRM and Android mode, the Android framework keeps pinning the panel to 72 Hz:
+
+```
+E DisplayModeDirector: Asked about unknown display, returning empty allowed set! (id=0)
+F DEBUG: #08 libsurfaceflinger.so (SurfaceFlinger::setAllowedDisplayConfigs(...))
+```
+
+`DisplayModeDirector` does not know display 0 and returns an empty allowed set. Handing that empty set to SurfaceFlinger reads past the end of the vector and crashes it twice during boot, after which it falls back to the default config.
+
+Every standard entry point is silently refused:
+
+```
+setAllowedDisplayConfigs({0})   -> returns success, state unchanged
+setActiveConfig(0)              -> returns success, state unchanged
+service call SurfaceFlinger 1035 i32 0 -> BAD_VALUE (-22)
+```
+
+Disassembling `/system/lib64/libsurfaceflinger.so` shows why: PICO added a private check to that function.
+
+```asm
+0xfad78  ldr  w10, [x9]        ; walk allowedConfigs
+0xfad7c  cmp  w10, #3          ; is any element equal to 3?
+0xfad80  b.eq #0xfadac         ; yes -> has pico parameter, proceed
+0xfadb8  b.eq #0xfae5c         ; no  -> no pico parameter
+0xfae6c  mov  w19, #-0x16      ;        return -22 (BAD_VALUE)
+0xfadd4  sub  x8, x8, #4       ; on success the marker is popped off the end
+```
+
+The array has to carry the marker `3`, and because it is popped from the back the marker must come last:
+
+```java
+SurfaceControl.setAllowedDisplayConfigs(token, new int[] {configIndex, 3});
+```
+
+The log line `no pico parameter so allow to change display config through surfaceflinger` is worded backwards: that branch is the one that refuses.
+
 ## 3. What the module does
 
 Package `com.picoxr.refreshselector`, scoped to `com.picovr.settings` **only**.
@@ -495,6 +595,7 @@ Package `com.picoxr.refreshselector`, scoped to `com.picovr.settings` **only**.
 | `PopupMenuHelper.c(...)` | Recognises the refresh popup by anchor id, replaces the items with `72 Hz / 90 Hz / 120 Hz` and rewrites `checkedPosition` |
 | `PicolabFragment$3.onItemClick(...)` | Replaces power-mode handling with rate handling: write vendor state, update the row label, dismiss the popup, call `K0()` to reboot |
 | `Utils.s1()` | Forced to `true`, cancelling the model gate where `Constant.i()` only accepts `FalconCV3` |
+| `SurfaceControl.setAllowedDisplayConfigs` | Called with PICO's marker `3` so the rate applies live, with no reboot |
 | `SettingApplication.onCreate(...)` | Read-only probe that logs `sdk_refreshRate`, `sdk_Recommand_refreshRate` and both properties |
 
 Request paths, all written explicitly instead of relying on the `s1()` decision inside `Utils.v1()`:
@@ -505,7 +606,10 @@ Request paths, all written explicitly instead of relying on the `s1()` decision 
 120 Hz  -> persist.pvr.display.type = jdi493120 + sdk_refreshRate = 120
 shared     sdk_Recommand_refreshRate mirrors the same value
            Utils.P0 / Utils.B0 / Utils.w1(24 for 72 Hz, 30 otherwise)
+           setAllowedDisplayConfigs(token, {configIndex, 3})  <- applies at once
 ```
+
+The menu only lists display configs that really exist, so right now it offers 72 and 120. A successful switch takes effect immediately; the "reboot required" path is only used when the live switch fails, and `pico_refresh_selector_auto_restart=1` restores the stock automatic reboot.
 
 The module never patches the PICO Settings APK, never touches resources and never writes a partition. Disabling the module or removing its scope fully restores the stock UI.
 
@@ -513,49 +617,54 @@ The module never patches the PICO Settings APK, never touches resources and neve
 
 - The device boots normally with the candidate DTBO; ADB is stable and no display artefacts appear.
 - 120 Hz shows up both in DRM `modes` and Android `supportedModes`.
+- **120 Hz is confirmed working, switched live without a reboot:**
+
+```
+VSYNC period:   8333333 ns          # = 120 Hz
+Allowed Display Configs: 120Hz
+refresh-rate:   120.000005 fps
+```
+
+- The kernel confirms the panel itself is perfectly happy at 120 Hz. It is brought up at 120 Hz during boot and only pushed back to 72 Hz by the framework seven seconds later:
+
+```
+[ 6.497391] dsi_display_set_mode: hactive=4320, vactive=2160, fps=120
+[13.597112] dsi_display_set_mode: hactive=4320, vactive=2160, fps=72
+```
+
+  No DSI/DSC/PLL/underrun errors anywhere in the log.
+
 - EDL (9008) read-back of `dtbo` and `dtbobak` is **byte-for-byte identical** to the ADB baseline, so rollback works.
-- The dropdown renders in the headset, all three entries are clickable, the popup dismisses on selection and the row label follows the choice.
-- Vector logs confirm hook load and request dispatch:
+- The dropdown renders in the headset, the popup dismisses on selection and the row label follows the choice.
+- The vendor state survives a reboot, and the configuration service really holds 120:
 
 ```
-PicoRefreshSelector: installed native PICO refresh popup hooks
-PicoRefreshSelector: injected native popup rates=[72, 90, 120]
-PicoRefreshSelector: requested 120 Hz
-PicoRefreshSelector: dismissed refresh popup
+config sdk_refreshRate=120
+config sdk_Recommand_refreshRate=120
+prop persist.pvr.display.type=jdi493120
+prop sys.pvr.display.type=120.000000
 ```
 
-## 5. Known blocker
+## 5. Known limitations
 
-**The panel still runs at 72 Hz.** Do not treat `requested 120 Hz` in the log as success — it only means the request was dispatched.
-
-The only trustworthy evidence is the hardware vsync period:
+**90 Hz is unavailable.** The stock DFPS list is `<90 72>`; after changing it to `<120 90 72>` DRM exposes only 120 and 72, and the intermediate 90 never becomes its own mode. The boot log gives the reason:
 
 ```
-$ adb shell dumpsys SurfaceFlinger | grep -E "VSYNC period|Allowed Display"
-    present offset: 0 ns     VSYNC period: 13888888 ns      # = 72 Hz
-Allowed Display Configs: 72Hz, (config override by backdoor: no)
+Invalid new_hfp calcluated-499
 ```
 
-Ruled out so far:
+The Qualcomm DSI DFPS path fails to compute the horizontal front porch for the intermediate rate. The menu is therefore generated from the display configs that actually exist, currently 72 and 120; once the intermediate timing is fixed, 90 appears on its own with no code change.
 
-| Attempt | Result |
-| --- | --- |
-| `Display.setUserPreferredDisplayMode(...)` | Method does not exist on Android 10 |
-| `Settings.Global` `peak_refresh_rate` / `min_refresh_rate` | Written successfully but inert; SurfaceFlinger still allows 72 Hz only |
-| `service call SurfaceFlinger 1035 i32 0` (config backdoor) | Returns `BAD_VALUE (-22)`; PICO disabled Android-level refresh-rate switching |
-| `service call SurfaceFlinger 1036` | Returns `PERMISSION_DENIED` |
-| `setprop persist.pvr.display.type` + reboot | Overwritten during boot |
-| `Settings.Global["persist.pvr.display.type"]=120` + reboot | Still reverted to `jdi49390` after boot |
+**The choice has to be re-applied after a reboot.** SurfaceFlinger returns to its default config on every start and the empty-allowed-set problem in `DisplayModeDirector` is still there. The module stores the choice in `Settings.Global` and reconciles it whenever PICO Settings starts:
 
-The root cause has two layers, and the second one only surfaced through the read-only probe:
+```
+PicoRefreshSelector: restoring stored choice 120 Hz
+PicoRefreshSelector: 120 Hz already active
+```
 
-1. **The persisted value lives in the PICO configuration service.** What actually survives a reboot is `sdk_refreshRate` inside `com.pvr.configuration`, accessed through `ConfigurationClientService`; it overwrites `persist.pvr.display.type` during boot. A bare `setprop` or a `Settings.Global` write is therefore wiped on the next boot.
-2. **Earlier builds wrote 90 when 120 was requested.** `Utils.s1()` measures as `false` (`Constant.i()` only accepts `ro.pvr.product.name == "FalconCV3"`, and PICO 4 is `Phoenix`), so `Utils.v1(true)` selects `jdi49390` and stores 90 in the configuration service. That is exactly why the property reverted to `jdi49390` after a reboot, and since 90 Hz has no DRM mode the vendor path falls back to 72 Hz.
+So opening Settings once after a reboot restores the rate. Making it fully transparent means extending the hook into `system_server` (the `android` scope) to fix `DisplayModeDirector.getAllowedModes()`, which is not done yet.
 
-Item 2 is fixed: all three rates are now written explicitly and the 120 entry writes `jdi493120` with `sdk_refreshRate=120`. What remains to be verified is whether the configuration service, once it holds 120, makes the vsync period become `8333333 ns` after one reboot.
-
-
-Next step: write `sdk_refreshRate = 120` through `ConfigurationClientService` from the module, reboot, and check whether the vsync period becomes `8333333 ns`.
+**Do not judge success from the logs.** `requested 120 Hz` only means the request was dispatched, and PICO's own `PxrCompositor: setRefreshRate:120.000000, current rate: 120.000000` merely echoes the `sys.pvr.display.type` property rather than the panel state. `VSYNC period` is the only trustworthy measure.
 
 ## 6. Build
 
@@ -573,6 +682,16 @@ Toolchain: `compileSdk 35`, `minSdk 29`, `targetSdk 29`, `compileOnly de.robv.an
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 # enable the module in Vector / LSPosed, scope = com.picovr.settings only
 adb shell su -c "am force-stop com.picovr.settings"
+```
+
+Optional switches, both stored in `Settings.Global`:
+
+```bash
+# live switching, on by default; set to 0 to fall back to "write config + reboot"
+adb shell settings put global pico_refresh_selector_live_switch 1
+
+# whether to reuse PICO's automatic reboot when the live switch fails, off by default
+adb shell settings put global pico_refresh_selector_auto_restart 0
 ```
 
 Confirm the hook loaded:
@@ -595,10 +714,13 @@ adb shell su -c "cat /sys/class/drm/card0-DSI-1/modes"
 adb shell dumpsys display | grep -m1 "Built-in Screen"
 
 # the only reliable proof of the real rate
-adb shell dumpsys SurfaceFlinger | grep "VSYNC period"
+adb shell dumpsys SurfaceFlinger | grep -E "VSYNC period|Allowed Display"
 #   13888888 ns = 72 Hz
 #   11111111 ns = 90 Hz
 #    8333333 ns = 120 Hz
+
+# the stored choice the module restores after a reboot
+adb shell settings get global pico_refresh_selector_choice
 
 # kernel display log
 adb shell su -c "dmesg | grep -iE 'dfps|dsi|underrun|hfp|pll'"
@@ -643,7 +765,9 @@ docs/
 - [x] Get 120 Hz enumerated by DRM and Android
 - [x] Reuse PICO's native dropdown for a three-way choice
 - [x] Establish that the stock flow depends on a reboot
-- [ ] Write `sdk_refreshRate` through `ConfigurationClientService` so 120 Hz truly applies
+- [x] Write `sdk_refreshRate` through the configuration service so the vendor state survives a reboot
+- [x] Reverse SurfaceFlinger's private check and switch 120 Hz live
+- [ ] Extend into `system_server` to fix `DisplayModeDirector` and apply the rate at boot
 - [ ] Fix intermediate timings so 90 Hz becomes its own DRM mode
 - [ ] Ship a Magisk module for one-step installation
 
@@ -802,6 +926,44 @@ Utils.x1(enable);                             // частота записи э�
 
 Отметка выбора определяется аргументом `checkedPosition` и не хранится внутри `MenuItemData`.
 
+### 2.5 Приватная проверка в SurfaceFlinger
+
+Даже когда DTBO объявляет 120 Гц допустимым режимом для DRM и Android, фреймворк Android продолжает удерживать панель на 72 Гц:
+
+```
+E DisplayModeDirector: Asked about unknown display, returning empty allowed set! (id=0)
+F DEBUG: #08 libsurfaceflinger.so (SurfaceFlinger::setAllowedDisplayConfigs(...))
+```
+
+`DisplayModeDirector` не знает display 0 и возвращает пустой набор допустимых режимов. Передача пустого набора в SurfaceFlinger приводит к выходу за границы вектора и дважды роняет его при загрузке, после чего он откатывается к режиму по умолчанию.
+
+Все стандартные точки входа молча отклоняются:
+
+```
+setAllowedDisplayConfigs({0})   -> возвращает успех, состояние не меняется
+setActiveConfig(0)              -> возвращает успех, состояние не меняется
+service call SurfaceFlinger 1035 i32 0 -> BAD_VALUE (-22)
+```
+
+Дизассемблирование `/system/lib64/libsurfaceflinger.so` объясняет причину: PICO добавила в эту функцию приватную проверку.
+
+```asm
+0xfad78  ldr  w10, [x9]        ; обход allowedConfigs
+0xfad7c  cmp  w10, #3          ; есть ли элемент, равный 3?
+0xfad80  b.eq #0xfadac         ; есть -> has pico parameter, продолжаем
+0xfadb8  b.eq #0xfae5c         ; нет  -> no pico parameter
+0xfae6c  mov  w19, #-0x16      ;         возврат -22 (BAD_VALUE)
+0xfadd4  sub  x8, x8, #4       ; при успехе маркер снимается с конца
+```
+
+Массив обязан содержать маркер `3`, и, поскольку он снимается с конца, маркер должен идти последним:
+
+```java
+SurfaceControl.setAllowedDisplayConfigs(token, new int[] {configIndex, 3});
+```
+
+Строка `no pico parameter so allow to change display config through surfaceflinger` сформулирована наоборот: именно эта ветка отклоняет запрос.
+
 ## 3. Что делает модуль
 
 Пакет `com.picoxr.refreshselector`, область действия — **только** `com.picovr.settings`.
@@ -813,6 +975,7 @@ Utils.x1(enable);                             // частота записи э�
 | `PopupMenuHelper.c(...)` | Определяет попап частоты по id якоря, заменяет элементы на `72 Hz / 90 Hz / 120 Hz` и переписывает `checkedPosition` |
 | `PicolabFragment$3.onItemClick(...)` | Вместо логики режимов питания обрабатывает частоту: запись состояния, обновление подписи, закрытие попапа, вызов `K0()` |
 | `Utils.s1()` | Принудительно `true`, чтобы обойти проверку модели, где `Constant.i()` принимает только `FalconCV3` |
+| `SurfaceControl.setAllowedDisplayConfigs` | Вызывается с маркером PICO `3`, поэтому частота применяется на ходу без перезагрузки |
 | `SettingApplication.onCreate(...)` | Диагностический зонд только для чтения: печатает `sdk_refreshRate`, `sdk_Recommand_refreshRate` и оба свойства |
 
 Пути запроса — все три записываются явно, без опоры на проверку `s1()` внутри `Utils.v1()`:
@@ -823,7 +986,10 @@ Utils.x1(enable);                             // частота записи э�
 120 Гц  -> persist.pvr.display.type = jdi493120 + sdk_refreshRate = 120
 общее      sdk_Recommand_refreshRate получает то же значение
            Utils.P0 / Utils.B0 / Utils.w1(24 для 72 Гц, иначе 30)
+           setAllowedDisplayConfigs(token, {configIndex, 3})  <- применяется сразу
 ```
+
+Меню перечисляет только реально существующие конфигурации дисплея, поэтому сейчас доступны 72 и 120. Успешное переключение вступает в силу немедленно; вариант с перезагрузкой используется только при неудаче live-переключения, а `pico_refresh_selector_auto_restart=1` возвращает штатную автоматическую перезагрузку.
 
 Модуль не патчит APK настроек PICO, не меняет ресурсы и не пишет в разделы. Отключение модуля или снятие области действия полностью восстанавливает штатный интерфейс.
 
@@ -831,49 +997,54 @@ Utils.x1(enable);                             // частота записи э�
 
 - С кандидатом DTBO устройство загружается нормально, ADB стабилен, артефактов нет.
 - 120 Гц присутствуют и в DRM `modes`, и в `supportedModes` Android.
+- **120 Гц подтверждённо работают, переключение выполняется на ходу без перезагрузки:**
+
+```
+VSYNC period:   8333333 ns          # = 120 Гц
+Allowed Display Configs: 120Hz
+refresh-rate:   120.000005 fps
+```
+
+- Ядро подтверждает, что сама панель спокойно работает на 120 Гц: при загрузке она поднимается именно на 120 Гц, и лишь через семь секунд фреймворк возвращает 72 Гц:
+
+```
+[ 6.497391] dsi_display_set_mode: hactive=4320, vactive=2160, fps=120
+[13.597112] dsi_display_set_mode: hactive=4320, vactive=2160, fps=72
+```
+
+  Ошибок DSI/DSC/PLL/underrun в журнале нет.
+
 - Считывание `dtbo` и `dtbobak` через EDL (9008) **побайтово совпадает** с эталоном из ADB, откат работает.
-- Меню отображается в шлеме, все три пункта нажимаются, попап закрывается после выбора, подпись строки обновляется.
-- Журнал Vector подтверждает загрузку хуков и отправку запросов:
+- Меню отображается в шлеме, попап закрывается после выбора, подпись строки обновляется.
+- Вендорное состояние переживает перезагрузку, и служба конфигурации действительно хранит 120:
 
 ```
-PicoRefreshSelector: installed native PICO refresh popup hooks
-PicoRefreshSelector: injected native popup rates=[72, 90, 120]
-PicoRefreshSelector: requested 120 Hz
-PicoRefreshSelector: dismissed refresh popup
+config sdk_refreshRate=120
+config sdk_Recommand_refreshRate=120
+prop persist.pvr.display.type=jdi493120
+prop sys.pvr.display.type=120.000000
 ```
 
-## 5. Известная блокировка
+## 5. Известные ограничения
 
-**Панель по-прежнему работает на 72 Гц.** Строка `requested 120 Hz` в журнале не означает успех — она подтверждает лишь отправку запроса.
-
-Единственное надёжное доказательство — аппаратный период vsync:
+**90 Гц недоступны.** Заводской список DFPS — `<90 72>`; после замены на `<120 90 72>` DRM публикует только 120 и 72, а промежуточные 90 не становятся отдельным режимом. Журнал загрузки объясняет причину:
 
 ```
-$ adb shell dumpsys SurfaceFlinger | grep -E "VSYNC period|Allowed Display"
-    present offset: 0 ns     VSYNC period: 13888888 ns      # = 72 Гц
-Allowed Display Configs: 72Hz, (config override by backdoor: no)
+Invalid new_hfp calcluated-499
 ```
 
-Проверено и исключено:
+Путь DFPS в драйвере Qualcomm DSI не может рассчитать horizontal front porch для промежуточной частоты. Поэтому меню формируется из реально существующих конфигураций дисплея — сейчас это 72 и 120; после исправления промежуточных таймингов 90 появятся сами, без правок кода.
 
-| Попытка | Результат |
-| --- | --- |
-| `Display.setUserPreferredDisplayMode(...)` | Метода нет в Android 10 |
-| `Settings.Global` `peak_refresh_rate` / `min_refresh_rate` | Запись успешна, но не действует: SurfaceFlinger разрешает только 72 Гц |
-| `service call SurfaceFlinger 1035 i32 0` (бэкдор конфигурации) | Возвращает `BAD_VALUE (-22)`; PICO отключила переключение частоты на уровне Android |
-| `service call SurfaceFlinger 1036` | Возвращает `PERMISSION_DENIED` |
-| `setprop persist.pvr.display.type` + перезагрузка | Перезаписывается при загрузке |
-| `Settings.Global["persist.pvr.display.type"]=120` + перезагрузка | После загрузки снова `jdi49390` |
+**После перезагрузки выбор нужно применить заново.** SurfaceFlinger при каждом старте возвращается к конфигурации по умолчанию, а проблема пустого набора в `DisplayModeDirector` остаётся. Модуль хранит выбор в `Settings.Global` и сверяет его при каждом запуске настроек PICO:
 
-Первопричина состоит из двух слоёв, и второй выявился только благодаря зонду только для чтения:
+```
+PicoRefreshSelector: restoring stored choice 120 Hz
+PicoRefreshSelector: 120 Hz already active
+```
 
-1. **Сохраняемое значение хранится в службе конфигурации PICO.** Перезагрузку переживает `sdk_refreshRate` внутри `com.pvr.configuration`, доступный через `ConfigurationClientService`; при загрузке он перезаписывает `persist.pvr.display.type`. Поэтому простой `setprop` или запись в `Settings.Global` стираются при следующей загрузке.
-2. **Ранние сборки записывали 90, когда запрашивались 120.** Замер показал, что `Utils.s1()` возвращает `false` (`Constant.i()` принимает только `ro.pvr.product.name == "FalconCV3"`, а PICO 4 — `Phoenix`), поэтому `Utils.v1(true)` выбирал `jdi49390` и сохранял 90 в службе конфигурации. Именно поэтому свойство после перезагрузки возвращалось к `jdi49390`, а так как для 90 Гц нет режима DRM, вендорный путь откатывался на 72 Гц.
+То есть достаточно один раз открыть настройки после перезагрузки. Чтобы это стало полностью незаметным, нужно расширить хук на `system_server` (область `android`) и починить `DisplayModeDirector.getAllowedModes()`; это ещё не сделано.
 
-Пункт 2 исправлен: теперь все три частоты записываются явно, а вариант 120 пишет `jdi493120` и `sdk_refreshRate=120`. Осталось проверить, приведёт ли одна перезагрузка с сохранённым значением 120 к периоду vsync `8333333 ns`.
-
-
-Следующий шаг: записать `sdk_refreshRate = 120` через `ConfigurationClientService` из модуля, перезагрузиться и проверить, стал ли период vsync равен `8333333 ns`.
+**Не судите об успехе по журналу.** `requested 120 Hz` означает лишь отправку запроса, а собственная строка PICO `PxrCompositor: setRefreshRate:120.000000, current rate: 120.000000` просто повторяет свойство `sys.pvr.display.type`, а не состояние панели. Единственный надёжный критерий — `VSYNC period`.
 
 ## 6. Сборка
 
@@ -891,6 +1062,16 @@ cd pico-refresh-selector
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 # включите модуль в Vector / LSPosed, область действия — только com.picovr.settings
 adb shell su -c "am force-stop com.picovr.settings"
+```
+
+Необязательные переключатели, оба хранятся в `Settings.Global`:
+
+```bash
+# переключение на ходу, включено по умолчанию; 0 возвращает схему «запись + перезагрузка»
+adb shell settings put global pico_refresh_selector_live_switch 1
+
+# использовать ли штатную автоперезагрузку PICO при неудаче live-переключения, по умолчанию выключено
+adb shell settings put global pico_refresh_selector_auto_restart 0
 ```
 
 Проверка загрузки хука:
@@ -913,10 +1094,13 @@ adb shell su -c "cat /sys/class/drm/card0-DSI-1/modes"
 adb shell dumpsys display | grep -m1 "Screen"
 
 # единственный надёжный критерий реальной частоты
-adb shell dumpsys SurfaceFlinger | grep "VSYNC period"
+adb shell dumpsys SurfaceFlinger | grep -E "VSYNC period|Allowed Display"
 #   13888888 ns = 72 Гц
 #   11111111 ns = 90 Гц
 #    8333333 ns = 120 Гц
+
+# сохранённый выбор, который модуль восстанавливает после перезагрузки
+adb shell settings get global pico_refresh_selector_choice
 
 # журнал дисплея в ядре
 adb shell su -c "dmesg | grep -iE 'dfps|dsi|underrun|hfp|pll'"
@@ -961,7 +1145,9 @@ docs/
 - [x] Добиться перечисления 120 Гц в DRM и Android
 - [x] Переиспользовать нативное меню PICO для выбора из трёх значений
 - [x] Установить, что штатный сценарий требует перезагрузки
-- [ ] Записывать `sdk_refreshRate` через `ConfigurationClientService`, чтобы 120 Гц действительно применялись
+- [x] Записывать `sdk_refreshRate` через службу конфигурации, чтобы вендорное состояние переживало перезагрузку
+- [x] Разобрать приватную проверку SurfaceFlinger и переключать 120 Гц на ходу
+- [ ] Расширить хук на `system_server`, починить `DisplayModeDirector` и применять частоту при загрузке
 - [ ] Исправить промежуточные тайминги, чтобы 90 Гц стали отдельным режимом DRM
 - [ ] Выпустить модуль Magisk для установки в один шаг
 
