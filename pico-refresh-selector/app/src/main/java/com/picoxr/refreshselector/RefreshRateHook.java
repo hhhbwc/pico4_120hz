@@ -14,6 +14,7 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +35,14 @@ public final class RefreshRateHook implements IXposedHookLoadPackage {
     // state and leaving the reboot to the user keeps the timing under control
     // and makes it possible to confirm the write before restarting.
     private static final String AUTO_RESTART_KEY = "pico_refresh_selector_auto_restart";
+    // DisplayModeDirector reports "unknown display" for id 0 and hands
+    // SurfaceFlinger an empty allowed set, which pins the panel to the default
+    // config. SurfaceFlinger's debug transaction 1035 pins a config directly and
+    // makes it ignore later allowed-config updates.
+    private static final String LIVE_SWITCH_KEY = "pico_refresh_selector_live_switch";
+    // One-shot trigger so the pin can be exercised without touching the headset UI.
+    private static final String PIN_NOW_KEY = "pico_refresh_selector_pin_now";
+    private static final int SF_SET_ALLOWED_CONFIG = 1035;
     private static final int[] RATES = {72, 90, 120};
 
     private static final ThreadLocal<Boolean> OPENING_REFRESH_MENU = new ThreadLocal<>();
@@ -116,6 +125,23 @@ public final class RefreshRateHook implements IXposedHookLoadPackage {
             XposedBridge.log(TAG + ": Utils.s1() read failed: " + error);
         }
         XposedBridge.log(TAG + ": --- end probe ---");
+        maybePinOnRequest(loader);
+    }
+
+    private static void maybePinOnRequest(ClassLoader loader) {
+        try {
+            Context context = (Context) XposedHelpers.callStaticMethod(
+                    XposedHelpers.findClass("com.picovr.settings.SettingApplication", loader), "b");
+            if (Settings.Global.getInt(context.getContentResolver(), PIN_NOW_KEY, 0) != 1) {
+                return;
+            }
+            Settings.Global.putInt(context.getContentResolver(), PIN_NOW_KEY, 0);
+            int rate = currentRate(context);
+            XposedBridge.log(TAG + ": pin-now requested for " + rate + " Hz");
+            pinSurfaceFlingerConfig(context, rate);
+        } catch (Throwable error) {
+            XposedBridge.log(TAG + ": pin-now failed: " + error);
+        }
     }
 
     private static void logConfigValue(ClassLoader loader, String key) {
@@ -367,6 +393,9 @@ public final class RefreshRateHook implements IXposedHookLoadPackage {
                     XposedHelpers.findClass("com.picovr.settings.SettingApplication", loader),
                     "b");
             applyVendorRate(context, rate, loader);
+            if (Settings.Global.getInt(context.getContentResolver(), LIVE_SWITCH_KEY, 1) == 1) {
+                pinSurfaceFlingerConfig(context, rate);
+            }
             Settings.Global.putInt(context.getContentResolver(), CHOICE_KEY, rate);
             XposedBridge.log(TAG + ": requested " + rate + " Hz");
         } catch (Throwable error) {
@@ -405,8 +434,100 @@ public final class RefreshRateHook implements IXposedHookLoadPackage {
         XposedBridge.log(TAG + ": vendor state -> " + type + ", sdk_refreshRate=" + value);
     }
 
+    private static void logDisplayConfigState(Class<?> surfaceControl, Object token, String when) {
+        try {
+            Object active = XposedHelpers.callStaticMethod(surfaceControl, "getActiveConfig", token);
+            Object allowed = XposedHelpers.callStaticMethod(
+                    surfaceControl, "getAllowedDisplayConfigs", token);
+            XposedBridge.log(TAG + ": " + when + " activeConfig=" + active
+                    + " allowedConfigs=" + (allowed instanceof int[]
+                            ? Arrays.toString((int[]) allowed) : allowed));
+        } catch (Throwable error) {
+            XposedBridge.log(TAG + ": " + when + " config read failed: " + error);
+        }
+    }
+
     private static boolean autoRestartEnabled(Context context) {
         return Settings.Global.getInt(context.getContentResolver(), AUTO_RESTART_KEY, 0) == 1;
+    }
+
+    // Android reports the 120 Hz entry as modeId 1 and 72 Hz as modeId 2, while
+    // SurfaceFlinger indexes the same list from zero.
+    private static void pinSurfaceFlingerConfig(Context context, int rate) {
+        int configIndex = -1;
+        DisplayManager manager = (DisplayManager) context.getSystemService(Context.DISPLAY_SERVICE);
+        if (manager != null) {
+            Display display = manager.getDisplay(Display.DEFAULT_DISPLAY);
+            if (display != null) {
+                for (Display.Mode mode : display.getSupportedModes()) {
+                    if (Math.round(mode.getRefreshRate()) == rate) {
+                        configIndex = mode.getModeId() - 1;
+                        break;
+                    }
+                }
+            }
+        }
+        if (configIndex < 0) {
+            XposedBridge.log(TAG + ": no SurfaceFlinger config for " + rate + " Hz");
+            return;
+        }
+
+        android.os.Parcel data = android.os.Parcel.obtain();
+        android.os.Parcel reply = android.os.Parcel.obtain();
+        try {
+            Class<?> surfaceControl = Class.forName("android.view.SurfaceControl");
+            for (Method method : surfaceControl.getDeclaredMethods()) {
+                String name = method.getName();
+                if (name.contains("Config") || name.contains("DisplayToken")
+                        || name.contains("PhysicalDisplay")) {
+                    XposedBridge.log(TAG + ": SurfaceControl." + name
+                            + Arrays.toString(method.getParameterTypes()));
+                }
+            }
+
+            Object token = null;
+            try {
+                token = XposedHelpers.callStaticMethod(surfaceControl, "getInternalDisplayToken");
+            } catch (Throwable ignored) {
+            }
+            XposedBridge.log(TAG + ": internalDisplayToken=" + token);
+            if (token == null) {
+                Object ids = XposedHelpers.callStaticMethod(surfaceControl, "getPhysicalDisplayIds");
+                if (ids instanceof long[] && ((long[]) ids).length > 0) {
+                    long id = ((long[]) ids)[0];
+                    XposedBridge.log(TAG + ": physicalDisplayId=" + id);
+                    token = XposedHelpers.callStaticMethod(surfaceControl,
+                            "getPhysicalDisplayToken", id);
+                }
+            }
+            if (token == null) {
+                XposedBridge.log(TAG + ": no display token available");
+                return;
+            }
+
+            logDisplayConfigState(surfaceControl, token, "before");
+            try {
+                XposedHelpers.callStaticMethod(surfaceControl, "setAllowedDisplayConfigs",
+                        token, new int[] {configIndex});
+                XposedBridge.log(TAG + ": setAllowedDisplayConfigs({" + configIndex + "}) accepted");
+            } catch (Throwable error) {
+                XposedBridge.log(TAG + ": setAllowedDisplayConfigs failed: " + error);
+            }
+            try {
+                XposedHelpers.callStaticMethod(surfaceControl, "setActiveConfig",
+                        token, configIndex);
+                XposedBridge.log(TAG + ": setActiveConfig(" + configIndex + ") accepted");
+            } catch (Throwable error) {
+                XposedBridge.log(TAG + ": setActiveConfig failed: " + error);
+            }
+            logDisplayConfigState(surfaceControl, token, "after");
+        } catch (Throwable error) {
+            XposedBridge.log(TAG + ": SurfaceFlinger pin failed: " + error);
+            XposedBridge.log(error);
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
     }
 
     // The stock refresh-rate switch only takes effect after the reboot that
