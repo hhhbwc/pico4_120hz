@@ -10,11 +10,11 @@
 
 > **当前状态 / Current status / Текущий статус**
 >
-> 120 Hz **已经实测生效**，运行时即时切换，无需重启（`VSYNC period: 8333333 ns`）。90 Hz 暂不可用。见[实测结果](#4-已验证的结果)。
+> **120 Hz 尚未真正实现。**DTBO 让 Android 枚举出一个标记为 120 Hz 的模式，SurfaceFlinger 也会报 `VSYNC period: 8333333 ns`，但面板从未真的以 120 Hz 扫描：内核里 `dsi_bridge_enable entered rate` 始终是 `72`。原因是这块面板的 DFPS 只能降频不能升频，详见[2.2](#22-dfps-只能降频不能升频)。**当前候选 DTBO 反而弄丢了原厂真实可用的 90 Hz**，建议先刷回原始 DTBO，见[已知限制](#5-已知限制)。
 >
-> 120 Hz **is confirmed working**, switched live without a reboot (`VSYNC period: 8333333 ns`). 90 Hz is not available yet. See [verified results](#4-verified-results).
+> **120 Hz is not actually working yet.** The DTBO makes Android enumerate a mode labelled 120 Hz and SurfaceFlinger reports `VSYNC period: 8333333 ns`, but the panel never scans at 120 Hz: the kernel's `dsi_bridge_enable entered rate` is always `72`. This panel's DFPS can only lower the rate, never raise it — see [2.2](#22-dfps-can-only-lower-the-rate). **The candidate DTBO also loses the genuine 90 Hz the stock firmware had**, so flashing the stock DTBO back is recommended; see [known limitations](#5-known-limitations).
 >
-> 120 Гц **подтверждённо работают**, переключение на ходу без перезагрузки (`VSYNC period: 8333333 ns`). 90 Гц пока недоступны. См. [подтверждённые результаты](#4-подтверждённые-результаты).
+> **120 Гц пока не работают.** DTBO заставляет Android перечислить режим с меткой 120 Гц, и SurfaceFlinger сообщает `VSYNC period: 8333333 ns`, но панель никогда не сканирует на 120 Гц: в ядре `dsi_bridge_enable entered rate` всегда `72`. DFPS этой панели умеет только понижать частоту — см. [2.2](#22-dfps-умеет-только-понижать-частоту). **Кандидат DTBO вдобавок теряет реальные 90 Гц из заводской прошивки**, поэтому рекомендуется вернуть исходный DTBO; см. [известные ограничения](#5-известные-ограничения).
 
 ---
 
@@ -87,18 +87,50 @@ supportedModes [{id=1, 4320x2160, fps=120.00001},
                 {id=2, 4320x2160, fps=72.00001}]
 ```
 
-### 2.2 为什么 90 Hz 消失了
+### 2.2 DFPS 只能降频不能升频
 
-原始 DFPS 列表是 `<90 72>`，改成 `<120 90 72>` 之后 DRM 只公开了 120 与 72，中间的 90 没有成为独立 mode。启动日志中可见：
+这块面板走的是 DFPS（动态帧率），关键属性是：
+
+```
+qcom,mdss-dsi-pan-fps-update = dfps_immediate_porch_mode_vfp
+```
+
+含义是**像素时钟固定不变，只调整垂直前肩（VFP）**。基准时序取自 DT 里的默认时序：
+
+```
+每 DSI 2160x2160（双 DSI 合成 4320x2160）
+h: hfp 54, hbp 33, hpw 20  -> htotal 2267（压缩后 827）
+v: vbp 4, vfp 57, vpw 4    -> vtotal 2225
+qcom,mdss-dsi-panel-framerate = 90
+```
+
+由此可推算每档所需的 VFP：
+
+```
+vtotal(fps) = vtotal_base × 90 / fps
+vfp(fps)    = 57 + (vtotal(fps) - 2225)
+
+72  Hz -> vtotal 2781 -> vfp  +613   可行
+90  Hz -> vtotal 2225 -> vfp    57   基准
+120 Hz -> vtotal 1669 -> vfp  -499   不可能
+```
+
+`-499` 正是内核那条报错的来源，它属于 **120 Hz**，不是 90 Hz：
 
 ```
 Invalid new_hfp calcluated-499
 ```
 
-说明 Qualcomm DSI 的 DFPS 路径在为中间刷新率计算 horizontal front porch 时失败，因此该档位没有被注册。结论：
+vtotal 1669 甚至小于 vactive 2160，物理上无法扫出 2160 行。**要往上加帧率必须提高像素时钟，而 immediate-porch 模式的 DFPS 不会动时钟。**
 
-- `qcom,dsi-supported-dfps-list` 里写了 90，**不等于** `/sys/class/drm/.../modes` 会公开 90。
-- 在修好中间时序之前，90 Hz 不可用，vendor 路径请求 90 会回落到 72。
+这套推算可以用 PICO 自己的面板节点交叉验证。`sharp_493_120_new_video` 以 120 Hz 为基准（vtotal 3686、htotal 1072），按同一公式推导：
+
+| 目标 | 推算 vfp | PICO 专用节点实测 vfp |
+| --- | --- | --- |
+| 90 Hz | 1242 | `sharp_493_90_new_video` = 1231 |
+| 72 Hz | 2471 | `sharp_493_72_new_video` = 2459 |
+
+误差都在 1% 以内，说明模型正确：**基准时序必须是最高帧率那一档**，其余档位靠加长 VFP 得到。我们这块面板的基准是 90 Hz，所以原厂只能给出 72/90。
 
 ### 2.3 PICO 的厂商刷新率链路
 
@@ -235,56 +267,76 @@ SurfaceControl.setAllowedDisplayConfigs(token, new int[] {configIndex, 3});
 
 ## 4. 已验证的结果
 
-- 候选 DTBO 刷入后设备正常启动，ADB 稳定，无显示异常。
-- 120 Hz 出现在 DRM `modes` 与 Android `supportedModes` 中。
-- **120 Hz 实测生效，且是运行时切换，无需重启：**
+- 候选 DTBO 刷入后设备正常启动，ADB 稳定，无显示异常；EDL 只读回读的 `dtbo` 与 `dtbobak` 与基线**逐字节一致**，回滚路径可用。
+- **逆向出 PICO 在 SurfaceFlinger 上的私有校验（魔数 `3`）确实有效**，这是本项目唯一被完整验证的运行时突破：
 
 ```
-VSYNC period:   8333333 ns          # = 120 Hz
-Allowed Display Configs: 120Hz
-refresh-rate:   120.000005 fps
+before  activeConfig=1  allowedConfigs=[1]
+setAllowedDisplayConfigs({0, 3})  -> accepted
+after   activeConfig=1  allowedConfigs=[0]      # 不带魔数时这里不会变
 ```
 
-- 内核确认面板本身完全能承受 120 Hz，开机时它就是以 120 Hz 点亮的，7 秒后才被框架改回 72：
+- 厂商状态可以跨重启保持，配置服务里存的就是 120：
 
 ```
-[ 6.497391] dsi_display_set_mode: hactive=4320, vactive=2160, fps=120
-[13.597112] dsi_display_set_mode: hactive=4320, vactive=2160, fps=72
-```
-
-  全程没有 DSI/DSC/PLL/underrun 报错。
-
-- EDL(9008) 只读回读的 `dtbo` 与 `dtbobak` 均与 ADB 基线**逐字节一致**，回滚路径可用。
-- 下拉菜单在头显中正常显示，点击后弹窗自动关闭，行文本随选择更新。
-- 厂商状态跨重启保持，配置服务里存的就是 120：
-
-```
-config sdk_refreshRate=120
-config sdk_Recommand_refreshRate=120
+config sdk_refreshRate=120 / sdk_Recommand_refreshRate=120
 prop persist.pvr.display.type=jdi493120
 prop sys.pvr.display.type=120.000000
 ```
 
+- 下拉菜单在头显中正常显示，点击后弹窗自动关闭，行文本随选择更新。
+
+### 但 120 Hz 并没有真正生效
+
+必须说清楚：上面这些都不等于面板在以 120 Hz 扫描。内核里 PICO 自己的日志给出了唯一可信的答案：
+
+```
+$ dmesg | grep -oE "entered rate:[0-9]+" | sort | uniq -c
+    102 entered rate:72
+```
+
+`entered rate:120` 出现 **0 次**。开机后除了 `t=6.5 s` 那一瞬间，`dsi_display_set_mode` 报告的一直是 `fps=72`。
+
+SurfaceFlinger 的 `VSYNC period: 8333333 ns` 是按那个模式登记的时序算出来的，而该模式的 vtotal 约为 1669——比 vactive 2160 还小，本身就是无效时序。换句话说，**Android 侧的 120 Hz 是一个被登记下来的假模式**，`refresh-rate: 120.000005 fps` 同样只是它的算术结果。
+
+同理，PICO 合成器那行日志也不能当证据，它只是回读属性：
+
+```
+PxrCompositor: setRefreshRate:120.000000, current rate: 120.000000
+```
+
 ## 5. 已知限制
 
-**90 Hz 不可用。**原始 DFPS 列表是 `<90 72>`，改成 `<120 90 72>` 后 DRM 只公开了 120 与 72，中间的 90 没有注册成独立 mode，启动日志给出原因：
+**候选 DTBO 目前是净损失，建议刷回原始 DTBO。**把 DFPS 列表改成 `<120 90 72>` 之后，DRM 实际登记的是 `{120(假), 72}`——原厂真实可用的 90 Hz 反而消失了。原始 DTBO 的列表是 `<90 72>`、`max-refresh-rate = 90`，两档都是有效时序。所以想要真正的高刷，正确做法是刷回原始 DTBO，用 72/90 两档。
+
+**90 Hz 是这块面板的原生档位。**面板名就叫 `sharp ls026b3sa 90hz video mode dsi panel`，`panel-framerate = 90`，DFPS 基准也是 90。它不需要任何时序改动，是三档里最容易拿到的一档。配合已经验证的魔数 `3`，可以做到 72↔90 运行时即时切换，不用重启——这比原厂那个必须重启的开关更好用。
+
+**120 Hz 需要新写一份时序，还没有做。**按 2.2 的推算，120 Hz 要求：
 
 ```
-Invalid new_hfp calcluated-499
+vtotal ≥ 2160 + 4 + 4 + 1 = 2169
+压缩后 htotal 827
+像素时钟 ≥ 827 × 2169 × 120 ≈ 215 MHz（当前 165.6 MHz，需 +30%）
+DSI 位时钟   ≈ 1291 MHz（当前 993.6 MHz）
 ```
 
-Qualcomm DSI 的 DFPS 路径为中间刷新率计算 horizontal front porch 时失败。因此菜单按实际存在的 display config 生成，目前只有 72 与 120；等中间时序修好，90 会自动出现，不需要改代码。
-
-**重启后需要重新应用。**SurfaceFlinger 每次启动都会回到默认配置，而 `DisplayModeDirector` 那个空集合的问题依然存在。模块的做法是把选择记在 `Settings.Global`，每次 PICO Settings 启动时比对一次并自动补上：
+SM8250 的 D-PHY 有这个余量，所以并非不可能。有利的线索是面板节点里本来就带着 120 Hz 的 TCON 命令，且与 72/90 明显不同：
 
 ```
-PicoRefreshSelector: restoring stored choice 120 Hz
-PicoRefreshSelector: 120 Hz already active
+qcom,mdss-dsi-post-72-nt57900-on-command  = ... b9 13 5f
+qcom,mdss-dsi-post-90-nt57900-on-command  = ... b9 13 5f      # 与 72 完全相同
+qcom,mdss-dsi-post-120-nt57900-on-command = ... b9 10 2c 01 cb # 明显不同
 ```
 
-也就是说重启后进一次设置即可恢复。要做到完全无感，需要把 hook 扩展到 `system_server`（`android` 作用域）去修 `DisplayModeDirector.getAllowedModes()`，这一步还没做。
+说明 PICO/Sharp 确实为这块面板准备过 120 Hz 的 TCON 配置。但要真正跑起来，必须补一份 `timing@1`，自行给出 120 Hz 的 porch、`panel-clockrate` 和重新计算的 `panel-phy-timings`。PHY 时序算错会直接黑屏或不稳定，属于比之前所有改动都更高的风险，因此在有把握之前不做。
 
-**不要用日志判断成功。**`requested 120 Hz` 只代表请求已下发；PICO 自己的 `PxrCompositor: setRefreshRate:120.000000, current rate: 120.000000` 也只是回读 `sys.pvr.display.type` 这个属性，不是面板实际状态。唯一可信的判据是 `VSYNC period`。
+**不要用日志或 dumpsys 判断成功。**唯一可信的判据是内核的 `dsi_bridge_enable entered rate`：
+
+```bash
+adb shell su -c "dmesg | grep -oE 'entered rate:[0-9]+' | sort | uniq -c"
+```
+
+**重启后需要重新应用。**SurfaceFlinger 每次启动都回到默认配置，`DisplayModeDirector` 的空集合问题依然存在。模块把选择记在 `Settings.Global`，每次 PICO Settings 启动时比对并补上；要完全无感需要把 hook 扩展到 `system_server`，还没做。
 
 ## 6. 构建
 
@@ -386,9 +438,11 @@ docs/
 - [x] 复用 PICO 原生下拉菜单实现三档选择
 - [x] 定位原生流程依赖重启的事实
 - [x] 通过配置服务写入 `sdk_refreshRate`，让厂商状态跨重启保持
-- [x] 逆向出 SurfaceFlinger 私有校验，实现 120 Hz 运行时即时切换
+- [x] 逆向出 SurfaceFlinger 私有校验（魔数 `3`），拿到运行时改配置的能力
+- [x] 用内核日志证伪「120 Hz 已生效」，定位 DFPS 只能降频的根本限制
+- [ ] 刷回原始 DTBO，验证 72↔90 运行时即时切换
 - [ ] 扩展到 `system_server` 修正 `DisplayModeDirector`，做到开机自动生效
-- [ ] 修正中间时序，使 90 Hz 成为独立 DRM mode
+- [ ] 为 120 Hz 新写一份 `timing@1`（porch + clockrate + phy-timings）
 - [ ] 提供 Magisk 模块形式的一键安装
 
 ## 12. 致谢
@@ -467,18 +521,50 @@ supportedModes [{id=1, 4320x2160, fps=120.00001},
                 {id=2, 4320x2160, fps=72.00001}]
 ```
 
-### 2.2 Why 90 Hz disappeared
+### 2.2 DFPS can only lower the rate
 
-The stock DFPS list is `<90 72>`. After changing it to `<120 90 72>`, DRM exposes only 120 and 72 — the middle 90 never becomes its own mode. The boot log shows:
+This panel uses DFPS (dynamic frame rate), and the decisive property is:
+
+```
+qcom,mdss-dsi-pan-fps-update = dfps_immediate_porch_mode_vfp
+```
+
+That means **the pixel clock stays fixed and only the vertical front porch (VFP) is adjusted**. The base timing is the default timing in the DT:
+
+```
+2160x2160 per DSI (dual DSI composes 4320x2160)
+h: hfp 54, hbp 33, hpw 20  -> htotal 2267 (827 compressed)
+v: vbp 4, vfp 57, vpw 4    -> vtotal 2225
+qcom,mdss-dsi-panel-framerate = 90
+```
+
+The VFP each rate would need follows directly:
+
+```
+vtotal(fps) = vtotal_base × 90 / fps
+vfp(fps)    = 57 + (vtotal(fps) - 2225)
+
+72  Hz -> vtotal 2781 -> vfp  +613   fine
+90  Hz -> vtotal 2225 -> vfp    57   the base
+120 Hz -> vtotal 1669 -> vfp  -499   impossible
+```
+
+That `-499` is exactly the kernel error, and it belongs to **120 Hz**, not 90 Hz:
 
 ```
 Invalid new_hfp calcluated-499
 ```
 
-The Qualcomm DSI DFPS path fails to compute the horizontal front porch for the intermediate rate, so that entry is never registered. Consequences:
+A vtotal of 1669 is smaller than vactive 2160, so 2160 lines cannot physically be scanned out. **Raising the rate requires raising the pixel clock, and immediate-porch DFPS never touches the clock.**
 
-- Listing 90 in `qcom,dsi-supported-dfps-list` does **not** mean `/sys/class/drm/.../modes` will expose 90.
-- Until the intermediate timing is fixed, 90 Hz is unusable and the vendor path falls back to 72 Hz.
+The model cross-checks against PICO's own panel nodes. `sharp_493_120_new_video` is based on 120 Hz (vtotal 3686, htotal 1072); applying the same formula:
+
+| Target | Derived vfp | Dedicated PICO node |
+| --- | --- | --- |
+| 90 Hz | 1242 | `sharp_493_90_new_video` = 1231 |
+| 72 Hz | 2471 | `sharp_493_72_new_video` = 2459 |
+
+Both within 1%, which confirms the model: **the base timing has to be the highest rate**, and the lower rates are produced by stretching VFP. Our panel's base is 90 Hz, which is why the stock firmware only offers 72/90.
 
 ### 2.3 PICO's vendor refresh-rate chain
 
@@ -615,56 +701,76 @@ The module never patches the PICO Settings APK, never touches resources and neve
 
 ## 4. Verified results
 
-- The device boots normally with the candidate DTBO; ADB is stable and no display artefacts appear.
-- 120 Hz shows up both in DRM `modes` and Android `supportedModes`.
-- **120 Hz is confirmed working, switched live without a reboot:**
+- The device boots normally with the candidate DTBO, ADB is stable and no display artefacts appear; EDL read-back of `dtbo` and `dtbobak` is **byte-for-byte identical** to the baseline, so rollback works.
+- **PICO's private check in SurfaceFlinger (the marker `3`) was reversed successfully**, and this is the one runtime breakthrough that is fully verified:
 
 ```
-VSYNC period:   8333333 ns          # = 120 Hz
-Allowed Display Configs: 120Hz
-refresh-rate:   120.000005 fps
+before  activeConfig=1  allowedConfigs=[1]
+setAllowedDisplayConfigs({0, 3})  -> accepted
+after   activeConfig=1  allowedConfigs=[0]      # without the marker this never changes
 ```
 
-- The kernel confirms the panel itself is perfectly happy at 120 Hz. It is brought up at 120 Hz during boot and only pushed back to 72 Hz by the framework seven seconds later:
+- The vendor state survives a reboot and the configuration service really holds 120:
 
 ```
-[ 6.497391] dsi_display_set_mode: hactive=4320, vactive=2160, fps=120
-[13.597112] dsi_display_set_mode: hactive=4320, vactive=2160, fps=72
-```
-
-  No DSI/DSC/PLL/underrun errors anywhere in the log.
-
-- EDL (9008) read-back of `dtbo` and `dtbobak` is **byte-for-byte identical** to the ADB baseline, so rollback works.
-- The dropdown renders in the headset, the popup dismisses on selection and the row label follows the choice.
-- The vendor state survives a reboot, and the configuration service really holds 120:
-
-```
-config sdk_refreshRate=120
-config sdk_Recommand_refreshRate=120
+config sdk_refreshRate=120 / sdk_Recommand_refreshRate=120
 prop persist.pvr.display.type=jdi493120
 prop sys.pvr.display.type=120.000000
 ```
 
+- The dropdown renders in the headset, the popup dismisses on selection and the row label follows the choice.
+
+### But 120 Hz is not actually in effect
+
+None of the above means the panel is scanning at 120 Hz. PICO's own kernel log gives the only trustworthy answer:
+
+```
+$ dmesg | grep -oE "entered rate:[0-9]+" | sort | uniq -c
+    102 entered rate:72
+```
+
+`entered rate:120` appears **zero** times. Apart from one moment at `t=6.5 s` during boot, every `dsi_display_set_mode` reports `fps=72`.
+
+SurfaceFlinger's `VSYNC period: 8333333 ns` is computed from the timing registered for that mode, and that mode's vtotal is about 1669 — smaller than vactive 2160, so the timing is invalid on its face. In other words **the 120 Hz on the Android side is a bogus mode that got registered**, and `refresh-rate: 120.000005 fps` is just arithmetic on it.
+
+PICO's compositor log is no evidence either; it only echoes a property:
+
+```
+PxrCompositor: setRefreshRate:120.000000, current rate: 120.000000
+```
+
 ## 5. Known limitations
 
-**90 Hz is unavailable.** The stock DFPS list is `<90 72>`; after changing it to `<120 90 72>` DRM exposes only 120 and 72, and the intermediate 90 never becomes its own mode. The boot log gives the reason:
+**The candidate DTBO is a net loss right now; flashing the stock DTBO back is recommended.** After changing the DFPS list to `<120 90 72>`, DRM actually registers `{120 (bogus), 72}` — the genuine 90 Hz the stock firmware had is gone. The stock DTBO lists `<90 72>` with `max-refresh-rate = 90`, and both are valid timings. So the correct way to get a higher rate today is to restore the stock DTBO and use 72/90.
+
+**90 Hz is this panel's native rate.** The panel is literally named `sharp ls026b3sa 90hz video mode dsi panel`, `panel-framerate = 90`, and the DFPS base is 90. It needs no timing work at all and is the easiest of the three. Combined with the verified marker `3`, 72↔90 can be switched live with no reboot — better than the stock toggle, which always rebooted.
+
+**120 Hz needs a newly authored timing, which has not been done.** Following the arithmetic in 2.2, 120 Hz requires:
 
 ```
-Invalid new_hfp calcluated-499
+vtotal >= 2160 + 4 + 4 + 1 = 2169
+compressed htotal 827
+pixel clock >= 827 x 2169 x 120 ~= 215 MHz (currently 165.6 MHz, +30%)
+DSI bit clock ~= 1291 MHz (currently 993.6 MHz)
 ```
 
-The Qualcomm DSI DFPS path fails to compute the horizontal front porch for the intermediate rate. The menu is therefore generated from the display configs that actually exist, currently 72 and 120; once the intermediate timing is fixed, 90 appears on its own with no code change.
-
-**The choice has to be re-applied after a reboot.** SurfaceFlinger returns to its default config on every start and the empty-allowed-set problem in `DisplayModeDirector` is still there. The module stores the choice in `Settings.Global` and reconciles it whenever PICO Settings starts:
+The SM8250 D-PHY has that headroom, so it is not impossible. An encouraging sign is that the panel node already carries a 120 Hz TCON command, clearly different from 72/90:
 
 ```
-PicoRefreshSelector: restoring stored choice 120 Hz
-PicoRefreshSelector: 120 Hz already active
+qcom,mdss-dsi-post-72-nt57900-on-command  = ... b9 13 5f
+qcom,mdss-dsi-post-90-nt57900-on-command  = ... b9 13 5f      # identical to 72
+qcom,mdss-dsi-post-120-nt57900-on-command = ... b9 10 2c 01 cb # clearly different
 ```
 
-So opening Settings once after a reboot restores the rate. Making it fully transparent means extending the hook into `system_server` (the `android` scope) to fix `DisplayModeDirector.getAllowedModes()`, which is not done yet.
+So PICO/Sharp did prepare a 120 Hz TCON configuration for this panel. Making it run, though, means adding a `timing@1` with hand-authored 120 Hz porches, `panel-clockrate` and recomputed `panel-phy-timings`. Wrong PHY timings mean a black screen or instability, a higher risk than anything done so far, so it stays untouched until it can be done with confidence.
 
-**Do not judge success from the logs.** `requested 120 Hz` only means the request was dispatched, and PICO's own `PxrCompositor: setRefreshRate:120.000000, current rate: 120.000000` merely echoes the `sys.pvr.display.type` property rather than the panel state. `VSYNC period` is the only trustworthy measure.
+**Do not judge success from logs or dumpsys.** The only trustworthy measure is the kernel's `dsi_bridge_enable entered rate`:
+
+```bash
+adb shell su -c "dmesg | grep -oE 'entered rate:[0-9]+' | sort | uniq -c"
+```
+
+**The choice has to be re-applied after a reboot.** SurfaceFlinger returns to its default config on every start and the empty-allowed-set problem in `DisplayModeDirector` remains. The module stores the choice in `Settings.Global` and reconciles it whenever PICO Settings starts; making it fully transparent needs the hook extended into `system_server`, which is not done.
 
 ## 6. Build
 
@@ -766,9 +872,11 @@ docs/
 - [x] Reuse PICO's native dropdown for a three-way choice
 - [x] Establish that the stock flow depends on a reboot
 - [x] Write `sdk_refreshRate` through the configuration service so the vendor state survives a reboot
-- [x] Reverse SurfaceFlinger's private check and switch 120 Hz live
+- [x] Reverse SurfaceFlinger's private check (marker `3`) and gain runtime config control
+- [x] Disprove "120 Hz works" from the kernel log and pin down the DFPS lower-only limit
+- [ ] Restore the stock DTBO and verify live 72<->90 switching
 - [ ] Extend into `system_server` to fix `DisplayModeDirector` and apply the rate at boot
-- [ ] Fix intermediate timings so 90 Hz becomes its own DRM mode
+- [ ] Author a `timing@1` for 120 Hz (porches + clockrate + phy-timings)
 - [ ] Ship a Magisk module for one-step installation
 
 ## 12. Credits
@@ -847,18 +955,50 @@ supportedModes [{id=1, 4320x2160, fps=120.00001},
                 {id=2, 4320x2160, fps=72.00001}]
 ```
 
-### 2.2 Почему пропали 90 Гц
+### 2.2 DFPS умеет только понижать частоту
 
-Заводской список DFPS — `<90 72>`. После замены на `<120 90 72>` DRM публикует только 120 и 72: промежуточные 90 не становятся отдельным режимом. В журнале загрузки видно:
+Панель использует DFPS (динамическую частоту кадров), и решающее свойство такое:
+
+```
+qcom,mdss-dsi-pan-fps-update = dfps_immediate_porch_mode_vfp
+```
+
+Это значит, что **пиксельная частота остаётся неизменной и подстраивается только вертикальный front porch (VFP)**. Базовым является тайминг по умолчанию из DT:
+
+```
+2160x2160 на каждый DSI (два DSI дают 4320x2160)
+h: hfp 54, hbp 33, hpw 20  -> htotal 2267 (827 после сжатия)
+v: vbp 4, vfp 57, vpw 4    -> vtotal 2225
+qcom,mdss-dsi-panel-framerate = 90
+```
+
+Требуемый VFP для каждой частоты вычисляется напрямую:
+
+```
+vtotal(fps) = vtotal_base × 90 / fps
+vfp(fps)    = 57 + (vtotal(fps) - 2225)
+
+72  Гц -> vtotal 2781 -> vfp  +613   допустимо
+90  Гц -> vtotal 2225 -> vfp    57   база
+120 Гц -> vtotal 1669 -> vfp  -499   невозможно
+```
+
+Эти `-499` и есть та самая ошибка ядра, и она относится к **120 Гц**, а не к 90 Гц:
 
 ```
 Invalid new_hfp calcluated-499
 ```
 
-Путь DFPS в драйвере Qualcomm DSI не может рассчитать horizontal front porch для промежуточной частоты, поэтому запись не регистрируется. Следствия:
+vtotal 1669 меньше vactive 2160, поэтому 2160 строк физически невозможно вывести. **Повышение частоты требует повышения пиксельной частоты, а DFPS в режиме immediate-porch её не меняет.**
 
-- Наличие 90 в `qcom,dsi-supported-dfps-list` **не означает**, что `/sys/class/drm/.../modes` покажет 90.
-- Пока промежуточные тайминги не исправлены, 90 Гц недоступны, а вендорный путь откатывается на 72 Гц.
+Модель перекрёстно проверяется на собственных узлах PICO. `sharp_493_120_new_video` построен на 120 Гц (vtotal 3686, htotal 1072); по той же формуле:
+
+| Цель | Расчётный vfp | Отдельный узел PICO |
+| --- | --- | --- |
+| 90 Гц | 1242 | `sharp_493_90_new_video` = 1231 |
+| 72 Гц | 2471 | `sharp_493_72_new_video` = 2459 |
+
+Отклонение менее 1%, что подтверждает модель: **базовым таймингом должна быть самая высокая частота**, а более низкие получаются растягиванием VFP. База нашей панели — 90 Гц, поэтому заводская прошивка предлагает только 72/90.
 
 ### 2.3 Вендорная цепочка PICO
 
@@ -995,56 +1135,76 @@ SurfaceControl.setAllowedDisplayConfigs(token, new int[] {configIndex, 3});
 
 ## 4. Подтверждённые результаты
 
-- С кандидатом DTBO устройство загружается нормально, ADB стабилен, артефактов нет.
-- 120 Гц присутствуют и в DRM `modes`, и в `supportedModes` Android.
-- **120 Гц подтверждённо работают, переключение выполняется на ходу без перезагрузки:**
+- С кандидатом DTBO устройство загружается нормально, ADB стабилен, артефактов нет; считывание `dtbo` и `dtbobak` через EDL **побайтово совпадает** с эталоном, откат работает.
+- **Приватная проверка PICO в SurfaceFlinger (маркер `3`) успешно разобрана** — это единственный полностью подтверждённый прорыв во время выполнения:
 
 ```
-VSYNC period:   8333333 ns          # = 120 Гц
-Allowed Display Configs: 120Hz
-refresh-rate:   120.000005 fps
+before  activeConfig=1  allowedConfigs=[1]
+setAllowedDisplayConfigs({0, 3})  -> accepted
+after   activeConfig=1  allowedConfigs=[0]      # без маркера значение не меняется
 ```
 
-- Ядро подтверждает, что сама панель спокойно работает на 120 Гц: при загрузке она поднимается именно на 120 Гц, и лишь через семь секунд фреймворк возвращает 72 Гц:
-
-```
-[ 6.497391] dsi_display_set_mode: hactive=4320, vactive=2160, fps=120
-[13.597112] dsi_display_set_mode: hactive=4320, vactive=2160, fps=72
-```
-
-  Ошибок DSI/DSC/PLL/underrun в журнале нет.
-
-- Считывание `dtbo` и `dtbobak` через EDL (9008) **побайтово совпадает** с эталоном из ADB, откат работает.
-- Меню отображается в шлеме, попап закрывается после выбора, подпись строки обновляется.
 - Вендорное состояние переживает перезагрузку, и служба конфигурации действительно хранит 120:
 
 ```
-config sdk_refreshRate=120
-config sdk_Recommand_refreshRate=120
+config sdk_refreshRate=120 / sdk_Recommand_refreshRate=120
 prop persist.pvr.display.type=jdi493120
 prop sys.pvr.display.type=120.000000
 ```
 
+- Меню отображается в шлеме, попап закрывается после выбора, подпись строки обновляется.
+
+### Но 120 Гц фактически не работают
+
+Ничто из перечисленного не означает, что панель сканирует на 120 Гц. Единственный достоверный ответ даёт собственный журнал ядра PICO:
+
+```
+$ dmesg | grep -oE "entered rate:[0-9]+" | sort | uniq -c
+    102 entered rate:72
+```
+
+`entered rate:120` не встречается **ни разу**. Кроме единственного момента на `t=6.5 s` при загрузке, каждый `dsi_display_set_mode` сообщает `fps=72`.
+
+`VSYNC period: 8333333 ns` в SurfaceFlinger вычислен из тайминга, зарегистрированного для этого режима, а его vtotal около 1669 — меньше vactive 2160, то есть тайминг заведомо некорректен. Иными словами, **120 Гц со стороны Android — это зарегистрированный фиктивный режим**, а `refresh-rate: 120.000005 fps` — лишь арифметика по нему.
+
+Журнал композитора PICO тоже не доказательство: он просто повторяет свойство:
+
+```
+PxrCompositor: setRefreshRate:120.000000, current rate: 120.000000
+```
+
 ## 5. Известные ограничения
 
-**90 Гц недоступны.** Заводской список DFPS — `<90 72>`; после замены на `<120 90 72>` DRM публикует только 120 и 72, а промежуточные 90 не становятся отдельным режимом. Журнал загрузки объясняет причину:
+**Кандидат DTBO сейчас даёт чистый проигрыш; рекомендуется вернуть исходный DTBO.** После замены списка DFPS на `<120 90 72>` DRM регистрирует `{120 (фиктивные), 72}` — реальные 90 Гц из заводской прошивки пропадают. В исходном DTBO список `<90 72>` и `max-refresh-rate = 90`, и оба тайминга корректны. Поэтому сегодня правильный путь к повышенной частоте — вернуть исходный DTBO и использовать 72/90.
+
+**90 Гц — родная частота этой панели.** Панель так и называется: `sharp ls026b3sa 90hz video mode dsi panel`, `panel-framerate = 90`, база DFPS тоже 90. Ей не нужны никакие правки таймингов, это самый простой из трёх вариантов. Вместе с подтверждённым маркером `3` переключение 72↔90 работает на ходу без перезагрузки — удобнее заводского переключателя, который всегда перезагружал устройство.
+
+**120 Гц требуют написать новый тайминг, и это не сделано.** По расчёту из 2.2 для 120 Гц нужно:
 
 ```
-Invalid new_hfp calcluated-499
+vtotal >= 2160 + 4 + 4 + 1 = 2169
+htotal после сжатия 827
+пиксельная частота >= 827 x 2169 x 120 ~= 215 МГц (сейчас 165,6 МГц, +30%)
+битовая частота DSI ~= 1291 МГц (сейчас 993,6 МГц)
 ```
 
-Путь DFPS в драйвере Qualcomm DSI не может рассчитать horizontal front porch для промежуточной частоты. Поэтому меню формируется из реально существующих конфигураций дисплея — сейчас это 72 и 120; после исправления промежуточных таймингов 90 появятся сами, без правок кода.
-
-**После перезагрузки выбор нужно применить заново.** SurfaceFlinger при каждом старте возвращается к конфигурации по умолчанию, а проблема пустого набора в `DisplayModeDirector` остаётся. Модуль хранит выбор в `Settings.Global` и сверяет его при каждом запуске настроек PICO:
+У D-PHY в SM8250 такой запас есть, так что это не невозможно. Обнадёживает то, что узел панели уже содержит команду TCON для 120 Гц, явно отличную от 72/90:
 
 ```
-PicoRefreshSelector: restoring stored choice 120 Hz
-PicoRefreshSelector: 120 Hz already active
+qcom,mdss-dsi-post-72-nt57900-on-command  = ... b9 13 5f
+qcom,mdss-dsi-post-90-nt57900-on-command  = ... b9 13 5f      # идентично 72
+qcom,mdss-dsi-post-120-nt57900-on-command = ... b9 10 2c 01 cb # явно иное
 ```
 
-То есть достаточно один раз открыть настройки после перезагрузки. Чтобы это стало полностью незаметным, нужно расширить хук на `system_server` (область `android`) и починить `DisplayModeDirector.getAllowedModes()`; это ещё не сделано.
+То есть PICO/Sharp действительно готовили конфигурацию TCON на 120 Гц для этой панели. Но чтобы она заработала, нужно добавить `timing@1` с вручную рассчитанными porch для 120 Гц, `panel-clockrate` и пересчитанными `panel-phy-timings`. Ошибка в тайминге PHY означает чёрный экран или нестабильность — риск выше всего сделанного ранее, поэтому это отложено до полной уверенности.
 
-**Не судите об успехе по журналу.** `requested 120 Hz` означает лишь отправку запроса, а собственная строка PICO `PxrCompositor: setRefreshRate:120.000000, current rate: 120.000000` просто повторяет свойство `sys.pvr.display.type`, а не состояние панели. Единственный надёжный критерий — `VSYNC period`.
+**Не судите об успехе по журналам или dumpsys.** Единственный достоверный критерий — `dsi_bridge_enable entered rate` в ядре:
+
+```bash
+adb shell su -c "dmesg | grep -oE 'entered rate:[0-9]+' | sort | uniq -c"
+```
+
+**После перезагрузки выбор нужно применить заново.** SurfaceFlinger при каждом старте возвращается к конфигурации по умолчанию, проблема пустого набора в `DisplayModeDirector` сохраняется. Модуль хранит выбор в `Settings.Global` и сверяет его при запуске настроек PICO; для полной незаметности нужно расширить хук на `system_server`, что не сделано.
 
 ## 6. Сборка
 
@@ -1146,9 +1306,11 @@ docs/
 - [x] Переиспользовать нативное меню PICO для выбора из трёх значений
 - [x] Установить, что штатный сценарий требует перезагрузки
 - [x] Записывать `sdk_refreshRate` через службу конфигурации, чтобы вендорное состояние переживало перезагрузку
-- [x] Разобрать приватную проверку SurfaceFlinger и переключать 120 Гц на ходу
+- [x] Разобрать приватную проверку SurfaceFlinger (маркер `3`) и получить контроль над конфигурацией во время работы
+- [x] Опровергнуть «120 Гц работают» по журналу ядра и установить, что DFPS умеет только понижать частоту
+- [ ] Вернуть исходный DTBO и проверить переключение 72<->90 на ходу
 - [ ] Расширить хук на `system_server`, починить `DisplayModeDirector` и применять частоту при загрузке
-- [ ] Исправить промежуточные тайминги, чтобы 90 Гц стали отдельным режимом DRM
+- [ ] Написать `timing@1` для 120 Гц (porch + clockrate + phy-timings)
 - [ ] Выпустить модуль Magisk для установки в один шаг
 
 ## 12. Благодарности
