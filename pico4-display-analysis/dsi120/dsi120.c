@@ -55,6 +55,7 @@
 #include <linux/spinlock.h>
 #include <linux/ratelimit.h>
 #include <linux/uaccess.h>
+#include <linux/clk.h>
 
 /* ------------------------------------------------------------------ */
 /* Parameters                                                          */
@@ -130,9 +131,9 @@ static unsigned long display_ptr = 0;    /* raw struct dsi_display *        */
 /* Function pointers resolved via kallsyms_lookup_name at init time. */
 static fn_dsi_clk_set_pixel_clk_rate_t  clk_set_pixel;
 static fn_dsi_clk_set_byte_clk_rate_t   clk_set_byte;
-static fn_dsi_clk_prepare_enable_t      clk_prepare_enable;
+static fn_dsi_clk_prepare_enable_t      clk_prep_en;
 static fn_dsi_clk_update_parent_t       clk_update_parent;
-static fn_dsi_clk_disable_unprepare_t   clk_disable_unprepare;
+static fn_dsi_clk_disable_unprepare_t   clk_dis_unprep;
 
 /* The current diagnostic build only observes probe hits.  Clock switching
  * remains in the worker below but is deliberately not scheduled by probes.
@@ -142,10 +143,13 @@ static void dsi120_clock_work(struct work_struct *ws);   /* forward decl */
 static DECLARE_WORK(clock_work, dsi120_clock_work);
 static unsigned int setmode_hits;
 static unsigned int pixel_hits;
+static unsigned int byte_hits;
 module_param(setmode_hits, uint, 0444);
 MODULE_PARM_DESC(setmode_hits, "Approximate dsi_display_set_mode probe hit count");
 module_param(pixel_hits, uint, 0444);
 MODULE_PARM_DESC(pixel_hits, "Approximate dsi_clk_set_pixel_clk_rate probe hit count");
+module_param(byte_hits, uint, 0444);
+MODULE_PARM_DESC(byte_hits, "Approximate dsi_clk_set_byte_clk_rate probe hit count");
 
 /* Guard so we don't switch clocks more often than every second, and
  * we don't re-enter the switch while one is in flight.
@@ -223,6 +227,25 @@ static void dsi120_clock_work(struct work_struct *ws)
         goto out;
     }
 
+    /* Validate the client handle: struct dsi_clk_client_info has
+     * char name[32] as its first field.  A valid handle should have
+     * a printable name (not all zeros, not all 0xFF). */
+    {
+        char *name = (char *)dsi_clk_handle;
+        int printable = 0;
+        int i;
+        for (i = 0; i < 32 && name[i]; i++) {
+            if (name[i] >= 32 && name[i] < 127)
+                printable++;
+        }
+        if (printable < 3) {
+            LOG("WARNING: clk_handle name not printable (%d/32) — "
+                "may not be a valid dsi_clk_client_info *\n", printable);
+        } else {
+            VLOG("clk_handle name: %.32s\n", name);
+        }
+    }
+
     /* Minimal safe sequence:
      *   1. prepare+enable the src clocks
      *   2. set the pixel and byte rates
@@ -236,8 +259,8 @@ static void dsi120_clock_work(struct work_struct *ws)
      * Setting the rates alone is enough to move the PLL.
      */
 
-    if (clk_prepare_enable && src_clks) {
-        rc = clk_prepare_enable(src_clks);
+    if (clk_prep_en && src_clks) {
+        rc = clk_prep_en(src_clks);
         if (rc) {
             LOG("clk_prepare_enable(src_clks) failed rc=%d — continuing\n", rc);
         }
@@ -266,10 +289,18 @@ static void dsi120_clock_work(struct work_struct *ws)
             LOG("clk_update_parent(src,mux) rc=%d (continuing)\n", rc);
     }
 
-    if (clk_disable_unprepare && src_clks) {
-        clk_disable_unprepare(src_clks);
+    if (clk_dis_unprep && src_clks) {
+        clk_dis_unprep(src_clks);
         VLOG("clk_disable_unprepare(src_clks)\n");
     }
+
+    /* Read back the actual rates to verify the switch took effect.
+     * dsi_clk_client_info->mngr->link_clks[index].freq contains the
+     * cached rates after a successful set.  We can't dereference safely
+     * without the full struct definition, so we log the expected values
+     * and rely on dmesg/regmap for hardware verification. */
+    LOG("expected after switch: pclk=%llu byte_clk=%llu\n",
+        (unsigned long long)pclk, (unsigned long long)byte);
 
     last_switch_jiffies = jiffies;
 out:
@@ -290,6 +321,7 @@ out:
 /* ------------------------------------------------------------------ */
 
 static struct kprobe kp_setpixel;
+static struct kprobe kp_setbyte;
 
 static int __kprobes handler_pixel_pre(struct kprobe *p, struct pt_regs *regs)
 {
@@ -300,6 +332,28 @@ static int __kprobes handler_pixel_pre(struct kprobe *p, struct pt_regs *regs)
         if (!READ_ONCE(dsi_clk_handle))
             WRITE_ONCE(dsi_clk_handle, handle);
         WRITE_ONCE(pixel_hits, READ_ONCE(pixel_hits) + 1);
+    }
+    return 0;
+}
+
+static int __kprobes handler_byte_pre(struct kprobe *p, struct pt_regs *regs)
+{
+    /* Observation-only: capture the first non-null client pointer and
+     * log the 4-parameter ABI to verify our function pointer is correct.
+     * x0=client, x1=byte_clk, x2=byte_intf_clk, w3=index
+     */
+    void *handle = (void *)regs->regs[0];
+    u64 byte_clk = (u64)regs->regs[1];
+    u64 byte_intf = (u64)regs->regs[2];
+    u32 index = (u32)regs->regs[3];
+
+    if (handle) {
+        if (!READ_ONCE(dsi_clk_handle))
+            WRITE_ONCE(dsi_clk_handle, handle);
+        WRITE_ONCE(byte_hits, READ_ONCE(byte_hits) + 1);
+        VLOG("byte_clk=%llu intf=%llu idx=%u\n",
+             (unsigned long long)byte_clk,
+             (unsigned long long)byte_intf, index);
     }
     return 0;
 }
@@ -318,9 +372,28 @@ static int register_pixel_probe(void)
     return 0;
 }
 
+static int register_byte_probe(void)
+{
+    kp_setbyte.symbol_name = "dsi_clk_set_byte_clk_rate";
+    kp_setbyte.pre_handler = handler_byte_pre;
+
+    int rc = register_kprobe(&kp_setbyte);
+    if (rc) {
+        LOG("register_kprobe(dsi_clk_set_byte_clk_rate) failed rc=%d\n", rc);
+        return rc;
+    }
+    LOG("registered kprobe on dsi_clk_set_byte_clk_rate (verify 4-param ABI)\n");
+    return 0;
+}
+
 static void unregister_pixel_probe(void)
 {
     unregister_kprobe(&kp_setpixel);
+}
+
+static void unregister_byte_probe(void)
+{
+    unregister_kprobe(&kp_setbyte);
 }
 
 /* ------------------------------------------------------------------ */
@@ -342,9 +415,9 @@ static int __init dsi120_init(void)
      */
     clk_set_pixel         = (fn_dsi_clk_set_pixel_clk_rate_t)kallsyms_lookup_name("dsi_clk_set_pixel_clk_rate");
     clk_set_byte          = (fn_dsi_clk_set_byte_clk_rate_t) kallsyms_lookup_name("dsi_clk_set_byte_clk_rate");
-    clk_prepare_enable    = (fn_dsi_clk_prepare_enable_t)    kallsyms_lookup_name("dsi_clk_prepare_enable");
+    clk_prep_en           = (fn_dsi_clk_prepare_enable_t)    kallsyms_lookup_name("dsi_clk_prepare_enable");
     clk_update_parent     = (fn_dsi_clk_update_parent_t)     kallsyms_lookup_name("dsi_clk_update_parent");
-    clk_disable_unprepare = (fn_dsi_clk_disable_unprepare_t) kallsyms_lookup_name("dsi_clk_disable_unprepare");
+    clk_dis_unprep        = (fn_dsi_clk_disable_unprepare_t) kallsyms_lookup_name("dsi_clk_disable_unprepare");
 
     if (!clk_set_pixel || !clk_set_byte) {
         LOG("DSI clock API symbols not found (set_pixel=%p set_byte=%p) — "
@@ -356,9 +429,9 @@ static int __init dsi120_init(void)
         "prepare=0x%px parent=0x%px disable=0x%px\n",
         (void *)clk_set_pixel,
         (void *)clk_set_byte,
-        (void *)clk_prepare_enable,
+        (void *)clk_prep_en,
         (void *)clk_update_parent,
-        (void *)clk_disable_unprepare);
+        (void *)clk_dis_unprep);
 
     /* Diagnostic build: probes only record scalar/pointer observations. */
     dsi120_wq = alloc_workqueue("dsi120", WQ_UNBOUND | WQ_MEM_RECLAIM, 1);
@@ -388,6 +461,14 @@ static int __init dsi120_init(void)
         return rc;
     }
 
+    rc = register_byte_probe();
+    if (rc) {
+        unregister_pixel_probe();
+        unregister_kprobe(&kp_setmode);
+        destroy_workqueue(dsi120_wq);
+        return rc;
+    }
+
     LOG("probe-only diagnostics active; no work is queued and no clocks are changed\n");
     return 0;
 }
@@ -396,6 +477,7 @@ static void __exit dsi120_exit(void)
 {
     unregister_kprobe(&kp_setmode);
     unregister_pixel_probe();
+    unregister_byte_probe();
     cancel_work_sync(&clock_work);
     destroy_workqueue(dsi120_wq);
     LOG("dsi120 unloaded\n");
