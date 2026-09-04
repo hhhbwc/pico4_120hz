@@ -123,6 +123,9 @@ On recovery: although `ro.boot.flash.locked=0`, **this device's fastboot has the
 | `build_candidate_dtbo.py` | 结构化解析并重组 DTBO，只改目标节点 |
 | `dtbo-120hz-candidate-audit.txt` | 候选镜像审计记录（偏移、尺寸、改动范围、校验值） |
 | `build_120hz_base_dtbo.py` | 把默认时序挪到 120 Hz，让 DFPS 能推导出 90 与 72 |
+| `build_120hz_v2_dtbo.py` | 修正版 120 Hz 候选：vfp=14 几何 + 可选 NOP PHY（内核 v4.0 重算），不加 clockrate、不动 NT57900 |
+| `extract_panel_config.py` | 离线解析任意 DTBO，导出指定面板节点的全部显示参数（timing/PHY/DSC/TCON） |
+| `LS026B3SA_120HZ_FULL_CONFIG.md` | 120 Hz 完整配置推导：timing/clock/PHY 已定，NT57900 120 序列可从同 DTBO 的 Innolux 节点移植 |
 | `verify_refresh_rate.sh` | 从 DSI 寄存器与时钟树算出真实刷新率，不依赖 dumpsys |
 | `edl-readonly-lun4-gpt-dtbo.xml` | Firehose **只读**回读配置，LUN4 上的 `gpt_header` 与 `dtbo` |
 
@@ -134,4 +137,4 @@ The stock active DTBO has been restored after the 120 Hz timing experiments. The
 
 The node has one `timing@0`, no independent 120 Hz `timing@1`, and no `qcom,mdss-dsi-panel-clockrate`. Its `post-120-nt57900-on-command` is only a rate-named 53-byte supplemental command. It is not a complete 120 Hz panel configuration. The `sharp_493_120_new_video` node in the same DTBO belongs to a different 960x3664 panel with different GPIO, PWM, DSC topology and timings, so it cannot be copied to LS026B3SA.
 
-A real 120 Hz attempt therefore requires a panel-specific timing, clock, PHY and TCON initialization set. No such vendor-validated set has been found yet; further partition writes would be blind experiments.
+A real 120 Hz attempt therefore requires a panel-specific timing, clock, PHY and TCON initialization set. **This set has been derived and tested**; see `LS026B3SA_120HZ_FULL_CONFIG.md`. The short version: all six layers (timing, clock, PHY, DSC, TCON, bridge) were worked out and three candidate DTBOs were flashed and tested on-device. All three produced `entered rate:120` in the kernel log but the panel stayed black with a corrupted band at the bottom. Register-level evidence (PLL register diff + DSI controller dump) proves the driver never actually switched the clock — the PLL stayed at 993 MHz and the hardware timing stayed at vfp=57 regardless of what the DTBO said. The panel's NT57900 bridge cannot render in this contradictory state. **120 Hz on this panel is not achievable by DTBO modification alone; it requires PICO to fix the display driver or release firmware that actually programs the PLL for 120 Hz.**
