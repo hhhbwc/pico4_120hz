@@ -16,21 +16,24 @@
  * dsi_clk_set_pixel_clk_rate() directly with the correct pclk / byte_clk
  * derived from the panel's 120 Hz geometry.
  *
+ * The current build is probe-only (diagnostic): callbacks capture pointers
+ * and bump counters, but never schedule work or call clock APIs.
+ *
  * Build
  * -----
- *   make -C <linux-4.19> M=$(pwd) ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
- * then patch the .modinfo vermagic to match the running kernel, see
- * patch_vermagic.py.
+ *   Sync .config from device /proc/config.gz, then:
+ *   bash build.sh
  *
- * Load (device, via Magisk root)
- * ------------------------------
- *   su -c 'insmod /data/local/tmp/dsi120.ko [target_rate=120] [verbose=1]'
- *   su -c 'rmmod dsi120'
+ * Load (device, via Magisk root, flags=0 required)
+ * ------------------------------------------------
+ *   adb shell su -Z u:r:magisk:s0 -c '/data/local/tmp/load_module /data/local/tmp/dsi120.ko 0'
+ *   adb shell su -Z u:r:magisk:s0 -c 'rmmod dsi120'
  *
  * Safety
  * ------
  *   * The clock switch is deferred to a workqueue so we never hold any
- *     driver lock while calling into the DSI clock stack.
+ *     driver lock while calling into the DSI clock stack (currently not
+ *     scheduled — probes are observation-only).
  *   * Every clock function's return code is logged; a failure leaves the
  *     hardware unchanged.
  *   * A module parameter 'armed=0|1' (default 1) lets you disarm the hook
@@ -89,15 +92,19 @@ MODULE_PARM_DESC(armed, "0 = disarm the kprobe hook without unloading");
 /* we never need to include BSP headers.                               */
 /* ------------------------------------------------------------------ */
 
-/* signature:  int dsi_clk_set_pixel_clk_rate(void *client, u64 pixel_clk, u32 index);
-   int dsi_clk_set_byte_clk_rate(void *client, u64 byte_clk, u32 index);
-   int dsi_clk_prepare_enable(struct dsi_clk_link_set *clk);
-   int dsi_clk_update_parent(struct dsi_clk_link_set *parent, struct dsi_clk_link_set *child);
-   void dsi_clk_disable_unprepare(struct dsi_clk_link_set *clk);
+/* Verified against Qualcomm CAF SM8250 dsi_clk_manager.c:
+ *   int dsi_clk_set_pixel_clk_rate(void *client, u64 pixel_clk, u32 index);
+ *   int dsi_clk_set_byte_clk_rate(void *client, u64 byte_clk, u64 byte_intf_clk, u32 index);
+ *   int dsi_clk_prepare_enable(struct dsi_clk_link_set *clk);
+ *   int dsi_clk_update_parent(struct dsi_clk_link_set *parent, struct dsi_clk_link_set *child);
+ *   void dsi_clk_disable_unprepare(struct dsi_clk_link_set *clk);
+ *
+ * client is actually struct dsi_clk_client_info * (from dsi_register_clk_handle).
+ * byte_clk takes an extra byte_intf_clk parameter we previously omitted.
  */
 
 typedef int (*fn_dsi_clk_set_pixel_clk_rate_t)(void *, u64, u32);
-typedef int (*fn_dsi_clk_set_byte_clk_rate_t)(void *, u64, u32);
+typedef int (*fn_dsi_clk_set_byte_clk_rate_t)(void *, u64, u64, u32);
 typedef int (*fn_dsi_clk_prepare_enable_t)(void *);
 typedef int (*fn_dsi_clk_update_parent_t)(void *, void *);
 typedef void (*fn_dsi_clk_disable_unprepare_t)(void *);
@@ -108,21 +115,17 @@ typedef void (*fn_dsi_clk_disable_unprepare_t)(void *);
 
 static struct kprobe kp_setmode;
 
-/* Captured on first dsi_display_set_mode probe hit.
- * dsi_clk_handle is the "client" argument the driver passes to the clock
- * API.  We read it from the stack of dsi_display_set_mode, whose frame
- * contains `struct dsi_display *display` as its first argument (x0 in
- * AAPCS64).  The display struct layout is BSP-private, but the
- * dsi_clk_handle field is stable across Kona BSPs; we discover its
- * offset at load time by reading the handle that dsi_display_set_mode
- * itself hands to dsi_clk_set_pixel_clk_rate on a non-120 Hz mode
- * switch (72<->90), where the call DOES happen.
+/* Captured on first dsi_clk_set_pixel_clk_rate probe hit.
+ * The "client" argument is actually struct dsi_clk_client_info * (from
+ * dsi_register_clk_handle()), NOT struct dsi_display *.  Its first field
+ * is char name[32], followed by refcounts and struct dsi_clk_mngr *mngr.
+ * We read it from the x0 register of the probed function.
  */
-static void *dsi_clk_handle = NULL;      /* display->dsi_clk_handle    */
+static void *dsi_clk_handle = NULL;      /* struct dsi_clk_client_info * */
 static void *src_clks = NULL;            /* &display->clock_info.src_clks   */
 static void *mux_clks = NULL;            /* &display->clock_info.mux_clks   */
 static void *shadow_clks = NULL;         /* &display->clock_info.shadow_clks */
-static unsigned long display_ptr = 0;    /* raw display pointer       */
+static unsigned long display_ptr = 0;    /* raw struct dsi_display *        */
 
 /* Function pointers resolved via kallsyms_lookup_name at init time. */
 static fn_dsi_clk_set_pixel_clk_rate_t  clk_set_pixel;
@@ -250,9 +253,12 @@ static void dsi120_clock_work(struct work_struct *ws)
     LOG("dsi_clk_set_pixel_clk_rate(%llu Hz, idx=0) -> rc=%d\n",
         (unsigned long long)pclk, rc);
 
-    rc = clk_set_byte(dsi_clk_handle, byte, 0);
-    LOG("dsi_clk_set_byte_clk_rate(%llu Hz, idx=0) -> rc=%d\n",
-        (unsigned long long)byte, rc);
+    /* byte_intf_clk: use the same value as byte_clk (both are u64).
+     * The actual hardware may need a different ratio; adjust if the
+     * clock framework rejects this. */
+    rc = clk_set_byte(dsi_clk_handle, byte, byte, 0);
+    LOG("dsi_clk_set_byte_clk_rate(%llu Hz, intf=%llu, idx=0) -> rc=%d\n",
+        (unsigned long long)byte, (unsigned long long)byte, rc);
 
     if (clk_update_parent && src_clks && mux_clks) {
         rc = clk_update_parent(src_clks, mux_clks);
@@ -271,18 +277,16 @@ out:
 }
 
 /* ------------------------------------------------------------------ */
-/* Offset discovery                                                    */
+/* ------------------------------------------------------------------ */
+/* Handle capture                                                       */
 /*                                                                      */
-/* We don't know the offset of dsi_clk_handle inside struct dsi_display.
- * Rather than guessing, we let the driver tell us: the very next time
- * dsi_display_set_mode calls dsi_clk_set_pixel_clk_rate (i.e., on a
- * 72<->90 Hz switch, where the call DOES happen), we hook THAT function
- * too and read its first argument — which IS the handle.
- *
- * We register a second kprobe on dsi_clk_set_pixel_clk_rate itself.
- * Its pre-handler captures the x0 argument as dsi_clk_handle.  Once
- * captured, we unregister that probe because we no longer need it.
- *                                                                      */
+/* We hook dsi_clk_set_pixel_clk_rate itself.  Its first argument (x0)  */
+/* is the "client" pointer — struct dsi_clk_client_info * — which the  */
+/* driver obtained from dsi_register_clk_handle().  We capture it on    */
+/* the first legitimate 72<->90 Hz switch, where the driver actually    */
+/* calls this function.  Once captured, we use it as the handle for     */
+/* our own 120 Hz clock switch.                                         */
+/* ------------------------------------------------------------------ */
 /* ------------------------------------------------------------------ */
 
 static struct kprobe kp_setpixel;
