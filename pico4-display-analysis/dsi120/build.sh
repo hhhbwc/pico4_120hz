@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 SRC=/mnt/c/Users/wzy/ALCOM/Projects/sj/pico4_120hz/pico4-display-analysis/dsi120/dsi120.c
 KDIR=/home/hhhbwc/linux-build/linux-4.19
 M=/home/hhhbwc/linux-build/dsi120
@@ -12,6 +12,6 @@ cd "$M"
 # modern GCC 13 trips over (missing-attributes, unused-function).  We
 # only care about real errors, so downgrade the rest.
 make -C "$KDIR" M="$M" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-     SKIP_STACK_VALIDATION=1 EXTRA_CFLAGS="-Wno-error" modules 2>&1 | tail -40
+     LOCALVERSION= SKIP_STACK_VALIDATION=1 EXTRA_CFLAGS="-Wno-error" modules 2>&1 | tail -40
 echo "=== result ==="
 ls -la "$M"

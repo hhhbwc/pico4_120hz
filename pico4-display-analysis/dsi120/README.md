@@ -31,6 +31,20 @@ Prerequisites on the WSL side (already installed):
 # vermagic exactly matches the running kernel):
 bash setup_buildroot.sh
 
+# IMPORTANT: sync the buildroot .config from the device kernel so that
+# CONFIG_KPROBES and other feature flags match.  Without this step the
+# module builds with CONFIG_KPROBES=n and register_kprobe() becomes a
+# stub that always returns 0 — probes are never actually registered.
+adb shell 'su -c "zcat /proc/config.gz"' > device-kernel.config
+cp device-kernel.config /home/hhhbwc/linux-build/linux-4.19/.config
+cd /home/hhhbwc/linux-build/linux-4.19
+make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- HOSTCFLAGS=-fcommon \
+     prepare modules_prepare
+# Note: the SELinux genheaders step may fail on modern GCC; the critical
+# generated headers (autoconf.h, utsrelease.h, kernel.release) are already
+# correct before that point.
+
 # Compile:
 bash build.sh
 
@@ -50,14 +64,12 @@ The Windows-side copy is at `out/dsi120.ko`.
 ## Load (device, via Magisk root, **no reboot required**)
 
 ```bash
-adb push /home/hhhbwc/linux-build/dsi120/dsi120.ko /data/local/tmp/dsi120.ko
-adb shell 'su -c "
-  insmod /data/local/tmp/dsi120.ko target_rate=120 verbose=1
-  dmesg | tail -30
-"'
+adb push dsi120.ko /data/local/tmp/
+# Cross-compile load_module.c for the device first, or use insmod directly
+adb shell su -Z u:r:magisk:s0 -c 'insmod /data/local/tmp/dsi120.ko target_rate=120'
 ```
 
-The module takes three parameters (all visible at runtime under
+The module takes five parameters (all visible at runtime under
 `/sys/module/dsi120/parameters/`):
 
   - `target_rate` — refresh rate (Hz) that triggers the forced switch
@@ -65,6 +77,8 @@ The module takes three parameters (all visible at runtime under
   - `verbose`   — set `1` to get detailed printk output.
   - `armed`     — set `0` to disarm the kprobe hook without unloading
     (e.g. `echo 0 > /sys/module/dsi120/parameters/armed`).
+  - `setmode_hits` — read-only counter of `dsi_display_set_mode` probe hits.
+  - `pixel_hits`  — read-only counter of `dsi_clk_set_pixel_clk_rate` probe hits.
 
 ## How it works (high level)
 
@@ -88,19 +102,16 @@ The module takes three parameters (all visible at runtime under
 ## Unload
 
 ```bash
-adb shell 'su -c "rmmod dsi120"'
+adb shell su -Z u:r:magisk:s0 -c 'rmmod dsi120'
 ```
 
-## Signature
+## Signature bypass
 
-`CONFIG_MODULE_SIG_FORCE=y` on the device.  Preliminary evidence
-(`insmod` of a real, vermagic-matched `.ko` under `su -c` succeeds)
-suggests Magisk bypasses the signature check at load time, but this
-has **not yet been confirmed end-to-end** because the device went
-offline mid-session.  If `insmod` refuses the unsigned `.ko` with
-`required key not available`, the bypass did not apply to adbd and
-you'll need to sign the module with the PICO signing key or use
-`/system/bin/insmod` from a Magisk-native shell.
+`CONFIG_MODULE_SIG_FORCE=y` on the device.  The `patch_sig_enforce.py`
+script zeroes the `sig_enforce` boolean variable and patches
+`is_module_sig_enforced()` to return false in the boot image.  Flash
+the resulting image, then unsigned modules load without the
+`Required key not available` error.
 
 ## Safety notes
 
@@ -118,11 +129,10 @@ you'll need to sign the module with the PICO signing key or use
 
 ```
 dsi120.c                  module source
-Makefile                  module Makefile (KDIR -> /home/hhhbwc/linux-build/linux-4.19)
-setup_buildroot.sh        one-time buildroot preparation
 build.sh                  compile the module
-disable_objtool.sh        (obsolete: kept for provenance; objtool bypass is
-                          now done via SKIP_STACK_VALIDATION=1 at build time)
-out/dsi120.ko             pre-built artifact (vermagic verified)
+setup_buildroot.sh        one-time buildroot preparation
+patch_sig_enforce.py      offline boot-image sig_enforce patcher
+hexpatch_boot.py          legacy branch-patch script (analysis only, do not flash)
+load_module.c             minimal finit_module() wrapper for Magisk shell
 README.md                 this file
 ```

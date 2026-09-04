@@ -131,14 +131,18 @@ static fn_dsi_clk_prepare_enable_t      clk_prepare_enable;
 static fn_dsi_clk_update_parent_t       clk_update_parent;
 static fn_dsi_clk_disable_unprepare_t   clk_disable_unprepare;
 
-/* Workqueue that actually performs the clock switch (avoids holding
- * any driver lock while calling into the clock stack).
+/* The current diagnostic build only observes probe hits.  Clock switching
+ * remains in the worker below but is deliberately not scheduled by probes.
  */
 static struct workqueue_struct *dsi120_wq;
 static void dsi120_clock_work(struct work_struct *ws);   /* forward decl */
 static DECLARE_WORK(clock_work, dsi120_clock_work);
-static DEFINE_SPINLOCK(work_lock);
-static bool work_pending;
+static unsigned int setmode_hits;
+static unsigned int pixel_hits;
+module_param(setmode_hits, uint, 0444);
+MODULE_PARM_DESC(setmode_hits, "Approximate dsi_display_set_mode probe hit count");
+module_param(pixel_hits, uint, 0444);
+MODULE_PARM_DESC(pixel_hits, "Approximate dsi_clk_set_pixel_clk_rate probe hit count");
 
 /* Guard so we don't switch clocks more often than every second, and
  * we don't re-enter the switch while one is in flight.
@@ -151,10 +155,10 @@ static bool switching = false;
 /* ------------------------------------------------------------------ */
 
 #define LOG(fmt, ...) \
-    printk(KERN_INFO "dsi120: " fmt, ##__VA_ARGS__)
+    printk(KERN_EMERG "dsi120: " fmt, ##__VA_ARGS__)
 
 #define VLOG(fmt, ...) \
-    do { if (verbose) printk(KERN_INFO "dsi120: " fmt, ##__VA_ARGS__); } while (0)
+    do { if (verbose) printk(KERN_EMERG "dsi120: " fmt, ##__VA_ARGS__); } while (0)
 
 /* ------------------------------------------------------------------ */
 /* kprobe handler — runs on every entry to dsi_display_set_mode().     */
@@ -167,27 +171,14 @@ static bool switching = false;
 
 static int __kprobes handler_pre(struct kprobe *p, struct pt_regs *regs)
 {
-    /* In AAPCS64 the first argument is in x0.  regs->regs[0] is x0. */
+    /* Observation-only: do not queue work or call driver APIs in probe context. */
     unsigned long disp = (unsigned long)regs->regs[0];
 
-    if (disp == 0)
-        return 0;
-
-    spin_lock(&work_lock);
-    /* Remember the display pointer; we'll use it to discover the clock
-     * handle offset.  We don't dereference it here — that's unsafe in
-     * probe context.
-     */
-    if (!display_ptr) {
-        display_ptr = disp;
-        VLOG("captured display ptr 0x%lx on first probe\n", disp);
+    if (disp) {
+        if (!READ_ONCE(display_ptr))
+            WRITE_ONCE(display_ptr, disp);
+        WRITE_ONCE(setmode_hits, READ_ONCE(setmode_hits) + 1);
     }
-    if (armed && dsi_clk_handle && !work_pending) {
-        work_pending = true;
-        queue_work(dsi120_wq, &clock_work);
-    }
-    spin_unlock(&work_lock);
-
     return 0;
 }
 
@@ -201,21 +192,15 @@ static void dsi120_clock_work(struct work_struct *ws)
 {
     int rc;
 
-    if (!armed) {
-        work_pending = false;
+    if (!armed)
         return;
-    }
 
-    if (switching) {
-        work_pending = false;
+    if (switching)
         return;
-    }
 
     /* Throttle: never switch twice within 1 s. */
-    if (time_before(jiffies, last_switch_jiffies + HZ)) {
-        work_pending = false;
+    if (time_before(jiffies, last_switch_jiffies + HZ))
         return;
-    }
 
     switching = true;
 
@@ -283,9 +268,6 @@ static void dsi120_clock_work(struct work_struct *ws)
     last_switch_jiffies = jiffies;
 out:
     switching = false;
-    spin_lock(&work_lock);
-    work_pending = false;
-    spin_unlock(&work_lock);
 }
 
 /* ------------------------------------------------------------------ */
@@ -304,20 +286,16 @@ out:
 /* ------------------------------------------------------------------ */
 
 static struct kprobe kp_setpixel;
-static bool handle_seen = false;
 
 static int __kprobes handler_pixel_pre(struct kprobe *p, struct pt_regs *regs)
 {
-    /* First arg (x0) = client = dsi_clk_handle. */
+    /* Observation-only: capture the first non-null client pointer. */
     void *handle = (void *)regs->regs[0];
 
     if (handle) {
-        spin_lock(&work_lock);
-        if (!dsi_clk_handle) {
-            dsi_clk_handle = handle;
-            LOG("captured dsi_clk_handle = 0x%px\n", dsi_clk_handle);
-        }
-        spin_unlock(&work_lock);
+        if (!READ_ONCE(dsi_clk_handle))
+            WRITE_ONCE(dsi_clk_handle, handle);
+        WRITE_ONCE(pixel_hits, READ_ONCE(pixel_hits) + 1);
     }
     return 0;
 }
@@ -338,11 +316,7 @@ static int register_pixel_probe(void)
 
 static void unregister_pixel_probe(void)
 {
-    if (handle_seen)
-        return;
     unregister_kprobe(&kp_setpixel);
-    handle_seen = true;
-    VLOG("unregistered pixel-capture probe\n");
 }
 
 /* ------------------------------------------------------------------ */
@@ -353,7 +327,10 @@ static int __init dsi120_init(void)
 {
     int rc;
 
-    LOG("dsi120 loading: target_rate=%u armed=%u\n", target_rate, armed);
+    /* Direct printk to verify the init function is actually running */
+    pr_emerg("dsi120: INIT FUNCTION ENTERED\n");
+    printk(KERN_EMERG "dsi120: target_rate=%u armed=%u verbose=%u\n",
+           target_rate, armed, verbose);
 
     /* Resolve the clock-API symbols.  If any is missing the kernel
      * doesn't have the DSI clock manager and we have nothing to do.
@@ -379,8 +356,8 @@ static int __init dsi120_init(void)
         (void *)clk_update_parent,
         (void *)clk_disable_unprepare);
 
-    /* Workqueue for the deferred clock switch. */
-    dsi120_wq = alloc_workqueue("dsi120", WQ_UNBOUND | WQ_MEM_RECLAIM, 0);
+    /* Diagnostic build: probes only record scalar/pointer observations. */
+    dsi120_wq = alloc_workqueue("dsi120", WQ_UNBOUND | WQ_MEM_RECLAIM, 1);
     if (!dsi120_wq) {
         LOG("alloc_workqueue failed\n");
         return -ENOMEM;
@@ -407,15 +384,14 @@ static int __init dsi120_init(void)
         return rc;
     }
 
-    LOG("dsi120 armed — waiting for a refresh-rate change to capture "
-        "the clock handle, then it will force %u Hz\n", target_rate);
+    LOG("probe-only diagnostics active; no work is queued and no clocks are changed\n");
     return 0;
 }
 
 static void __exit dsi120_exit(void)
 {
     unregister_kprobe(&kp_setmode);
-    unregister_kprobe(&kp_setpixel);
+    unregister_pixel_probe();
     cancel_work_sync(&clock_work);
     destroy_workqueue(dsi120_wq);
     LOG("dsi120 unloaded\n");
