@@ -1,138 +1,132 @@
-# dsi120 — force the PICO 4 DSI pixel clock at 120 Hz
+# dsi120 — PICO 4 DSI 120 Hz 时钟强制切换内核模块
 
-## What it is
+适用于 SM8250 PICO 4（内核 `4.19.81-perf+`）的可加载内核模块，
+通过 kprobe 钩住 `dsi_display_set_mode()`，在驱动接受 120 Hz 模式后
+手动调用 `dsi_clk_set_pixel_clk_rate()` 把 DSI PLL 从 993 MHz（90 Hz）
+切到正确的 120 Hz 时钟。
 
-A loadable Linux kernel module for the SM8250 PICO 4 (kernel
-`4.19.81-perf+`) that hooks `dsi_display_set_mode()` via kprobe and
-manually invokes `dsi_clk_set_pixel_clk_rate()` to move the DSI PLL
-off the 993 MHz (90 Hz) value the driver currently leaves it on.
+## 背景
 
-## Why
+详见 `../FINAL_120HZ_ANALYSIS.md`。简要版：PICO 显示驱动注册了
+120 Hz 模式（`entered rate:120`），更新了 DRM 状态机，但**从未调用
+`dsi_clk_set_pixel_clk_rate()`**。PLL 停在 993 MHz，vtotal 停在 2225，
+面板收到的信号和 90 Hz 完全一样——黑屏+底部花屏。
 
-See `../FINAL_120HZ_ANALYSIS.md`.  The short version: the PICO display
-driver registers the 120 Hz mode and updates the DRM state machine
-(`entered rate:120`), but never actually reprograms the DSI PLL.  The
-panel therefore receives a 90 Hz signal while the stack believes it is
-at 120 — a black screen with a corrupted band at the bottom.
+本模块从驱动外部补上这一步，不修改 DTBO。
 
-This module closes that gap from outside the driver, without touching
-the DTBO and without patching the kernel.
+## 前置条件：签名绕过
 
-## Build (this Windows machine, WSL Ubuntu)
+设备内核 `CONFIG_MODULE_SIG_FORCE=y`，未签名模块会被拒绝加载。
+使用 `patch_sig_enforce.py` 离线补丁 boot 镜像，将 `sig_enforce`
+数据变量清零并让 `is_module_sig_enforced()` 始终返回 false。
+补丁已刷入并验证通过。
 
-Prerequisites on the WSL side (already installed):
-  - `gcc-aarch64-linux-gnu`
-  - `linux-source` 4.19 (cloned to `/home/hhhbwc/linux-build/linux-4.19`)
-  - `bison`, `flex`, `m4`
+注意：`hexpatch_boot.py` 是早期的错误猜测（偏移 `0xfb02d4`），
+仅保留用于分析，**不要刷入**。正确的补丁脚本是 `patch_sig_enforce.py`。
+
+## 构建（WSL Ubuntu）
 
 ```bash
-# One-time setup of the buildroot (generates autoconf.h for arm64,
-# forces UTS_RELEASE to "4.19.81-perf+" so the built module's
-# vermagic exactly matches the running kernel):
-bash setup_buildroot.sh
-
-# IMPORTANT: sync the buildroot .config from the device kernel so that
-# CONFIG_KPROBES and other feature flags match.  Without this step the
-# module builds with CONFIG_KPROBES=n and register_kprobe() becomes a
-# stub that always returns 0 — probes are never actually registered.
+# 1. 同步设备内核配置（关键！否则 CONFIG_KPROBES=n，探针永远不注册）
 adb shell 'su -c "zcat /proc/config.gz"' > device-kernel.config
 cp device-kernel.config /home/hhhbwc/linux-build/linux-4.19/.config
 cd /home/hhhbwc/linux-build/linux-4.19
 make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
 make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- HOSTCFLAGS=-fcommon \
      prepare modules_prepare
-# Note: the SELinux genheaders step may fail on modern GCC; the critical
-# generated headers (autoconf.h, utsrelease.h, kernel.release) are already
-# correct before that point.
+# SELinux genheaders 在新版 GCC 上会报错，但关键头文件已生成，可忽略
 
-# Compile:
+# 2. 编译模块
 bash build.sh
 
-# Artifact:
+# 3. 产物
 /home/hhhbwc/linux-build/dsi120/dsi120.ko
 ```
 
-Expected vermagic in the built module (must match the running kernel
-byte-for-byte for `insmod` to accept it):
-
+构建产物 vermagic 必须与运行内核完全一致：
 ```
 vermagic=4.19.81-perf+ SMP preempt mod_unload modversions aarch64
 ```
 
-The Windows-side copy is at `out/dsi120.ko`.
+注意：`setup_buildroot.sh` 是早期的一次性脚本，功能已被上述
+设备配置同步取代，保留仅供参考。
 
-## Load (device, via Magisk root, **no reboot required**)
+## 加载（设备端，Magisk root）
+
+需要先交叉编译 `load_module.c` 并推送到设备：
 
 ```bash
 adb push dsi120.ko /data/local/tmp/
-# Cross-compile load_module.c for the device first, or use insmod directly
-adb shell su -Z u:r:magisk:s0 -c 'insmod /data/local/tmp/dsi120.ko target_rate=120'
+adb push load_module /data/local/tmp/
+adb shell su -Z u:r:magisk:s0 -c '/data/local/tmp/load_module /data/local/tmp/dsi120.ko 0'
 ```
 
-The module takes five parameters (all visible at runtime under
-`/sys/module/dsi120/parameters/`):
+`load_module` 使用 `finit_module(fd, "", flags=0)` 加载模块。
+**flags 必须是 `0`**，其他值（`0x2`、`0x6`）会导致 `EINVAL`。
 
-  - `target_rate` — refresh rate (Hz) that triggers the forced switch
-    (default `120`).
-  - `verbose`   — set `1` to get detailed printk output.
-  - `armed`     — set `0` to disarm the kprobe hook without unloading
-    (e.g. `echo 0 > /sys/module/dsi120/parameters/armed`).
-  - `setmode_hits` — read-only counter of `dsi_display_set_mode` probe hits.
-  - `pixel_hits`  — read-only counter of `dsi_clk_set_pixel_clk_rate` probe hits.
-
-## How it works (high level)
-
-  1. Kprobe on `dsi_display_set_mode` fires on every mode set.  When
-     `armed=1` and the clock handle has been captured, it queues a
-     work item.
-  2. Kprobe on `dsi_clk_set_pixel_clk_rate` runs on the first
-     legitimate 72<->90 Hz switch and captures the `client` argument —
-     that IS `display->dsi_clk_handle`, which we need for the API.
-  3. The work item calls, in order:
-       - `dsi_clk_prepare_enable(&src_clks)`
-       - `dsi_clk_update_parent(&mux_clks, &shadow_clks)`
-       - `dsi_clk_set_pixel_clk_rate(handle, 216541680, 0)`   # 120 Hz pclk
-       - `dsi_clk_set_byte_clk_rate(handle, 162406260, 0)`    # 120 Hz byteclk
-       - `dsi_clk_update_parent(&src_clks, &mux_clks)`
-       - `dsi_clk_disable_unprepare(&src_clks)`
-
-   The work is deliberately deferred to a kernel thread so we never
-   hold a driver lock while calling into the clock stack.
-
-## Unload
+## 卸载
 
 ```bash
 adb shell su -Z u:r:magisk:s0 -c 'rmmod dsi120'
 ```
 
-## Signature bypass
+## 模块参数
 
-`CONFIG_MODULE_SIG_FORCE=y` on the device.  The `patch_sig_enforce.py`
-script zeroes the `sig_enforce` boolean variable and patches
-`is_module_sig_enforced()` to return false in the boot image.  Flash
-the resulting image, then unsigned modules load without the
-`Required key not available` error.
+加载后可通过 `/sys/module/dsi120/parameters/` 查看：
 
-## Safety notes
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `target_rate` | uint | 触发强制切换的目标刷新率（默认 `120`） |
+| `verbose` | uint | `1` 输出详细日志（默认 `0`） |
+| `armed` | uint | `0` 解除武装但不卸载（默认 `1`） |
+| `setmode_hits` | uint, 只读 | `dsi_display_set_mode` 探针命中次数 |
+| `pixel_hits` | uint, 只读 | `dsi_clk_set_pixel_clk_rate` 探针命中次数 |
 
-  - No reboot is required.  `rmmod` restores the original behaviour
-    immediately (the kernel just stops calling the extra clock switch).
-  - The clock switch is throttled to once per second and is not
-    re-entrant.
-  - Every clock function's return code is logged; a failure is logged
-    but does not corrupt state.
-  - If the module panics (should not, but kernel modules always carry
-    that risk), hold the power button.  The device will reboot to the
-    stock DTBO, which is still in place.
+## 当前状态：probe-only 诊断版
 
-## Files
+当前构建是**纯观察模式**——kprobe 回调只记录指针和计数，
+不排队 workqueue、不调用任何时钟 API。这用于验证探针注册
+和设备稳定性。
+
+时钟切换逻辑（`dsi120_clock_work()`）存在但不可达。后续版本
+会在确认探针命中和时钟句柄捕获后，受控恢复 workqueue 调度
+和时钟调用。
+
+## 验证探针注册
+
+```bash
+# 确认探针已注册
+adb shell su -Z u:r:magisk:s0 -c 'cat /sys/kernel/debug/kprobes/list | grep dsi'
+
+# 确认模块加载
+adb shell 'cat /sys/module/dsi120/initstate'
+
+# 读取命中计数
+adb shell 'cat /sys/module/dsi120/parameters/setmode_hits /sys/module/dsi120/parameters/pixel_hits'
+
+# 读取内核日志
+adb shell su -Z u:r:magisk:s0 -c 'dmesg | grep dsi120'
+```
+
+日志级别为 `KERN_EMERG`，确保在所有控制台上可见。
+
+## 已知限制
+
+- `src_clks`/`mux_clks`/`shadow_clks` 已声明但未赋值，时钟
+  prepare/parent/disable 序列不会执行（仅直接设置 pixel/byte rate）
+- 时钟句柄（`dsi_clk_handle`）通过第二个 kprobe 在合法 72↔90 Hz
+  切换时捕获；如果设备从未切换过刷新率，句柄为空
+- 函数指针 ABI 基于 AAPCS64 约定（`regs->regs[0]` = 第一个参数），
+  未针对 BSP 私有结构布局做完整验证
+
+## 文件
 
 ```
-dsi120.c                  module source
-build.sh                  compile the module
-setup_buildroot.sh        one-time buildroot preparation
-patch_sig_enforce.py      offline boot-image sig_enforce patcher
-hexpatch_boot.py          legacy branch-patch script (analysis only, do not flash)
-load_module.c             minimal finit_module() wrapper for Magisk shell
-README.md                 this file
+dsi120.c                  模块源码
+build.sh                  编译脚本（含 LOCALVERSION= 修正）
+patch_sig_enforce.py      离线 boot 镜像签名绕过补丁（正确版本）
+hexpatch_boot.py          早期分支补丁脚本（分析用，不要刷入）
+load_module.c             finit_module() 包装器（Magisk shell 用）
+setup_buildroot.sh        早期构建环境准备（已被设备配置同步取代）
+README.md                 本文件
 ```

@@ -1,10 +1,10 @@
 # pico4_120hz
 
-**PICO 4 显示刷新率研究：原生 72/90 Hz + 120 Hz DTBO 超频实验**
+**PICO 4 显示刷新率研究：原生 72/90 Hz + 120 Hz DTBO 超频实验 + dsi120 内核模块**
 
-**PICO 4 display refresh-rate research: stock 72/90 Hz + 120 Hz DTBO overclock experiments**
+**PICO 4 display refresh-rate research: stock 72/90 Hz + 120 Hz DTBO overclock experiments + dsi120 kernel module**
 
-**Исследование частоты обновления PICO 4: штатные 72/90 Гц + эксперименты с разгоном DTBO до 120 Гц**
+**Исследование частоты обновления PICO 4: штатные 72/90 Гц + эксперименты с разгоном DTBO до 120 Гц + модуль ядра dsi120**
 
 [中文](#中文) · [English](#english) · [Русский](#русский)
 
@@ -452,7 +452,7 @@ echo 1 > /sys/kernel/debug/tracing/events/kprobes/clk_probe/enable
 
 **PICO 的显示驱动接受了 120 Hz 模式（`entered rate:120`），更新了 DRM 状态机，但从未把新的时钟和时序写入硬件。** PLL 仍在 993 MHz，vtotal 仍是 2225，面板收到的信号和 90 Hz 一模一样。NT57900 桥在这个矛盾状态下无法出图，表现为黑屏+底部花屏。
 
-无论 DTBO 怎么改——timing、clockrate、PHY、TCON——只要驱动不调用 `dsi_clk_set_pixel_clk_rate`，120 Hz 就永远不会发生。这超出了 DTBO 能做到的范围。
+无论 DTBO 怎么改——timing、clockrate、PHY、TCON——只要驱动不调用 `dsi_clk_set_pixel_clk_rate`，120 Hz 就永远不会发生。这超出了 DTBO 能做到的范围。内核模块路径（dsi120）正在尝试从驱动外部补上这一步，详见 `pico4-display-analysis/dsi120/README.md`。
 
 ### 改驱动的可行路径
 
@@ -460,12 +460,12 @@ echo 1 > /sys/kernel/debug/tracing/events/kprobes/clk_probe/enable
 
 | 路径 | 可行性 | 障碍 |
 | --- | --- | --- |
-| 内核模块 + kprobe 钩住 `dsi_display_set_mode`，手动调用 `dsi_clk_set_pixel_clk_rate` | 理论可行 | `MODULE_SIG_FORCE=y`，必须绕过签名或拿到签名密钥 |
-| 静态二进制补丁 boot.img 里的内核，修改 `dsi_display_set_mode` 指令 | 理论可行 | 需精确定位函数机器码；内核已提取（35 MB ARM64 Image），但 kallsyms 解码尚未完成；OTA 后要重做 |
+| 内核模块 + kprobe 钩住 `dsi_display_set_mode`，手动调用 `dsi_clk_set_pixel_clk_rate` | **已实现** | `sig_enforce` 已通过 `patch_sig_enforce.py` 绕过；dsi120 模块已构建并加载，kprobe 已注册；时钟切换验证进行中 |
+| 静态二进制补丁 boot.img 里的内核，修改 `dsi_display_set_mode` 指令 | 理论可行 | kallsyms 解码已完成；`hexpatch_boot.py` 存在但为分析用脚本，当前优先走内核模块路径 |
 | 改 DTBO | **已证明无效** | 驱动不读这些值，三个变体覆盖 vfp×PHY 两维度结果一致 |
 | 等 PICO 推送支持 120 Hz 的固件更新 | 最省事 | 不可控 |
 
-设备已回滚原厂，`entered rate:72/90` 正常。所有候选镜像保留在 `pico4-display-analysis/` 仅供复现，标注了不建议再刷。完整分析详见 `pico4-display-analysis/FINAL_120HZ_ANALYSIS.md` 和 `LS026B3SA_120HZ_FULL_CONFIG.md`。
+设备已回滚原厂，`entered rate:72/90` 正常。所有候选镜像保留在 `pico4-display-analysis/` 仅供复现，标注了不建议再刷。完整分析详见 `pico4-display-analysis/FINAL_120HZ_ANALYSIS.md`、`LS026B3SA_120HZ_FULL_CONFIG.md` 和 `pico4-display-analysis/dsi120/README.md`。
 
 ## 6. 构建
 
@@ -560,10 +560,12 @@ pico4-display-analysis/
   dsi120/
     dsi120.c                     内核模块：kprobe + 强制 DSI 时钟切换
     build.sh                     编译脚本（WSL，需设备 .config 同步）
-    setup_buildroot.sh           一次性构建环境准备
     patch_sig_enforce.py         离线 boot 镜像签名绕过补丁
     load_module.c                finit_module() 包装器（Magisk shell 用）
+    hexpatch_boot.py             早期分支补丁脚本（分析用，不要刷入）
+    setup_buildroot.sh           早期构建环境准备（已被设备配置同步取代）
     README.md                    模块构建/加载/参数文档
+  FLASH_INSTRUCTIONS.md          boot 镜像补丁与刷写指南
 pico-refresh-selector/
   app/src/main/java/com/picoxr/refreshselector/RefreshRateHook.java
   app/src/main/assets/xposed_init
@@ -1031,7 +1033,7 @@ echo 1 > /sys/kernel/debug/tracing/events/kprobes/clk_probe/enable
 
 **PICO's display driver accepted the 120 Hz mode (`entered rate:120`), updated the DRM state machine, but never wrote the new clock and timing to hardware.** The PLL stayed at 993 MHz, vtotal stayed at 2225, and the panel received exactly the same signal as 90 Hz. The NT57900 bridge cannot render in this contradictory state, producing a black screen with a corrupted bottom band.
 
-No matter what the DTBO says — timing, clockrate, PHY, TCON — as long as the driver does not call `dsi_clk_set_pixel_clk_rate`, 120 Hz will never happen. This is beyond what DTBO modification can achieve.
+No matter what the DTBO says — timing, clockrate, PHY, TCON — as long as the driver does not call `dsi_clk_set_pixel_clk_rate`, 120 Hz will never happen. This is beyond what DTBO modification can achieve. The kernel-module path (dsi120) is attempting to close this gap from outside the driver; see `pico4-display-analysis/dsi120/README.md`.
 
 ### Paths to modify the driver
 
@@ -1039,12 +1041,12 @@ Kernel config confirmed: `CONFIG_KPROBES=y`, `CONFIG_MODULES=y`, but `CONFIG_MOD
 
 | Path | Feasibility | Obstacle |
 | --- | --- | --- |
-| Kernel module + kprobe hook on `dsi_display_set_mode`, manually call `dsi_clk_set_pixel_clk_rate` | Theoretically viable | `MODULE_SIG_FORCE=y`, must bypass signing or obtain the key |
-| Static binary patch of kernel in boot.img, modify `dsi_display_set_mode` instructions | Theoretically viable | Needs precise function address; kernel extracted (35 MB ARM64 Image) but kallsyms decode incomplete; must redo after each OTA |
+| Kernel module + kprobe hook on `dsi_display_set_mode`, manually call `dsi_clk_set_pixel_clk_rate` | **Implemented** | `sig_enforce` bypassed via `patch_sig_enforce.py`; dsi120 module built and loaded, kprobes registered; clock-switch verification in progress |
+| Static binary patch of kernel in boot.img, modify `dsi_display_set_mode` instructions | Theoretically viable | kallsyms decode complete; `hexpatch_boot.py` exists as an analysis-only script; kernel module path is currently preferred |
 | Modify DTBO | **Proven ineffective** | Driver ignores these values; three variants covering vfp×PHY dimensions all fail identically |
 | Wait for PICO firmware update with 120 Hz support | Easiest | Not user-controllable |
 
-Device has been rolled back to stock, `entered rate:72/90` normal. All candidate images retained in `pico4-display-analysis/` for reproduction only, marked as not recommended to flash. Full analysis in `pico4-display-analysis/FINAL_120HZ_ANALYSIS.md` and `LS026B3SA_120HZ_FULL_CONFIG.md`.
+Device has been rolled back to stock, `entered rate:72/90` normal. All candidate images retained in `pico4-display-analysis/` for reproduction only, marked as not recommended to flash. Full analysis in `pico4-display-analysis/FINAL_120HZ_ANALYSIS.md`, `LS026B3SA_120HZ_FULL_CONFIG.md`, and `pico4-display-analysis/dsi120/README.md`.
 
 ## 6. Build
 
@@ -1139,10 +1141,12 @@ pico4-display-analysis/
   dsi120/
     dsi120.c                     kernel module: kprobe + forced DSI clock switch
     build.sh                     build script (WSL, requires device .config sync)
-    setup_buildroot.sh           one-time buildroot preparation
     patch_sig_enforce.py         offline boot-image signature bypass patcher
     load_module.c                finit_module() wrapper for Magisk shell
+    hexpatch_boot.py             legacy branch-patch script (analysis only, do not flash)
+    setup_buildroot.sh           early buildroot preparation (superseded by device config sync)
     README.md                    module build/load/parameter documentation
+  FLASH_INSTRUCTIONS.md          boot-image patching and flashing guide
 pico-refresh-selector/
   app/src/main/java/com/picoxr/refreshselector/RefreshRateHook.java
   app/src/main/assets/xposed_init
@@ -1599,7 +1603,7 @@ kprobe подтвердил: `dsi_display_set_mode` вызывается (`enter
 
 **Драйвер PICO принял режим 120 Гц (`entered rate:120`) и обновил конечный автомат DRM, но так и не записал новые часы и тайминги в железо.** PLL осталась на 993 МГц, vtotal на 2225 — панель получает ровно тот же сигнал, что и на 90 Гц. Мост NT57900 не может вывести картинку в этом противоречивом состоянии, отсюда чёрный экран с искажённой полосой снизу.
 
-Как бы ни правился DTBO — timing, clockrate, PHY, TCON — пока драйвер не вызывает `dsi_clk_set_pixel_clk_rate`, 120 Гц не появятся. Это выходит за пределы возможностей DTBO.
+Как бы ни правился DTBO — timing, clockrate, PHY, TCON — пока драйвер не вызывает `dsi_clk_set_pixel_clk_rate`, 120 Гц не появятся. Это выходит за пределы возможностей DTBO. Путь через модуль ядра (dsi120) пытается закрыть этот пробел извне драйвера; см. `pico4-display-analysis/dsi120/README.md`.
 
 ### Возможные пути через драйвер
 
@@ -1607,12 +1611,12 @@ kprobe подтвердил: `dsi_display_set_mode` вызывается (`enter
 
 | Путь | Осуществимость | Препятствие |
 | --- | --- | --- |
-| Модуль ядра + kprobe на `dsi_display_set_mode` с ручным вызовом `dsi_clk_set_pixel_clk_rate` | теоретически да | `MODULE_SIG_FORCE=y`: нужен обход подписи или сам ключ |
-| Статический патч ядра внутри boot.img (правка инструкций `dsi_display_set_mode`) | теоретически да | нужен точный адрес функции; ядро извлечено (35 МБ ARM64 Image), но kallsyms не декодирован; после OTA всё заново |
+| Модуль ядра + kprobe на `dsi_display_set_mode` с ручным вызовом `dsi_clk_set_pixel_clk_rate` | **Реализовано** | `sig_enforce` обойдён через `patch_sig_enforce.py`; модуль dsi120 собран и загружен, kprobe зарегистрированы; проверка переключения часов в процессе |
+| Статический патч ядра внутри boot.img (правка инструкций `dsi_display_set_mode`) | теоретически да | kallsyms декодирован; `hexpatch_boot.py` существует как скрипт только для анализа; приоритет отдан пути через модуль ядра |
 | Правка DTBO | **доказано неэффективно** | драйвер не читает эти значения; три варианта по осям vfp×PHY дали одинаковый результат |
 | Дождаться прошивки PICO с поддержкой 120 Гц | проще всего | не зависит от нас |
 
-Устройство откачено на завод, `entered rate:72/90` работает. Полный анализ — в `pico4-display-analysis/FINAL_120HZ_ANALYSIS.md` и `LS026B3SA_120HZ_FULL_CONFIG.md`.
+Устройство откачено на завод, `entered rate:72/90` работает. Полный анализ — в `pico4-display-analysis/FINAL_120HZ_ANALYSIS.md`, `LS026B3SA_120HZ_FULL_CONFIG.md` и `pico4-display-analysis/dsi120/README.md`.
 
 ## 6. Сборка
 
@@ -1707,10 +1711,12 @@ pico4-display-analysis/
   dsi120/
     dsi120.c                     модуль ядра: kprobe + принудительное переключение часов DSI
     build.sh                     скрипт сборки (WSL, требует синхронизации .config с устройством)
-    setup_buildroot.sh           одноразовая подготовка сборочного окружения
     patch_sig_enforce.py         офлайн-патчер обхода подписи в boot-образе
     load_module.c                обёртка finit_module() для Magisk shell
+    hexpatch_boot.py             ранний скрипт патча ветки (только для анализа, не прошивать)
+    setup_buildroot.sh           ранняя подготовка сборочного окружения (заменена синхронизацией .config)
     README.md                    документация по сборке, загрузке и параметрам модуля
+  FLASH_INSTRUCTIONS.md          руководство по патчингу и прошивке boot-образа
 pico-refresh-selector/
   app/src/main/java/com/picoxr/refreshselector/RefreshRateHook.java
   app/src/main/assets/xposed_init
