@@ -10,11 +10,11 @@
 
 > **当前状态 / Current status / Текущий статус**
 >
-> **最终结论：120 Hz 在 LS026B3SA 上不可行。** 三个变体 DTBO（vfp=14/vfp=57/保留原厂 PHY）全部刷入实测，均黑屏+底部花屏。通过 regmap 直读 DSI PLL 寄存器和 kprobe 验证，定位到根本原因：驱动注册了 120 Hz 模式（`entered rate:120`）但**从未调用 `dsi_clk_set_pixel_clk_rate`**，PLL 停在 993 MHz，vtotal 停在 2225，DT 写入的 vfp=14 未下发。这不是配置问题，是 PICO 显示驱动不支持 120 Hz 时钟切换。详见[寄存器级失败分析](#52-失败分析)。
+> **DTBO 层面的 120 Hz 已确认不可行**（三个变体均黑屏+花屏，寄存器级证据证实驱动从不调用时钟切换）。但内核模块路径已突破：`sig_enforce` 签名绕过成功，kprobe 模块已加载并注册到 `dsi_display_set_mode` 和 `dsi_clk_set_pixel_clk_rate`，正在进行时钟切换验证。详见 [dsi120 内核模块](pico4-display-analysis/dsi120/README.md) 和[寄存器级失败分析](#52-失败分析)。
 >
-> **Final verdict: 120 Hz is not achievable on LS026B3SA.** Three DTBO variants were flashed and tested; all produced a black screen with a corrupted bottom band. Register-level evidence (PLL regmap diff + kprobe) proves the driver registered the 120 Hz mode but never called the clock-switch function — the PLL stayed at 993 MHz, vtotal stayed at 2225, and the DT's vfp=14 was never applied. This is a driver limitation, not a configuration issue. See [register-level failure analysis](#52-failure-analysis).
+> **DTBO-level 120 Hz is confirmed infeasible** (all three variants black-screened; register-level evidence proves the driver never calls the clock-switch function). However, the kernel-module path has broken through: the `sig_enforce` signature bypass works, a kprobe module is loaded and registered on `dsi_display_set_mode` and `dsi_clk_set_pixel_clk_rate`, and clock-switch verification is in progress. See the [dsi120 kernel module](pico4-display-analysis/dsi120/README.md) and [register-level failure analysis](#52-failure-analysis).
 >
-> **Итог: 120 Гц на LS026B3SA недостижимы.** Три варианта DTBO прошиты и проверены — все дали чёрный экран с искажениями снизу. Доказательства на уровне регистров (regmap + kprobe) показывают, что драйвер зарегистрировал режим 120 Гц, но никогда не вызывал функцию переключения часов — PLL осталась на 993 МГц, vtotal на 2225. Это ограничение драйвера, а не конфигурации. См. [анализ на уровне регистров](#52-анализ-неудачи).
+> **DTBO-уровень 120 Гц подтверждённо недостижим** (все три варианта дали чёрный экран; регистровые доказательства показывают, что драйвер не вызывает функцию переключения часов). Однако путь через модуль ядра прорван: обход подписи `sig_enforce` работает, kprobe-модуль загружен и зарегистрирован на `dsi_display_set_mode` и `dsi_clk_set_pixel_clk_rate`, идёт проверка переключения часов. См. [модуль ядра dsi120](pico4-display-analysis/dsi120/README.md) и [анализ на уровне регистров](#52-анализ-неудачи).
 
 ---
 
@@ -557,6 +557,13 @@ pico4-display-analysis/
   LS026B3SA_120HZ_FULL_CONFIG.md 完整配置推导与实机验证文档
   pll_90hz_baseline.txt           90 Hz 原厂 PLL 寄存器基线（292 个）
   pll_120hz.txt                   120 Hz 下 PLL 寄存器（与基线 diff 证实时钟未切换）
+  dsi120/
+    dsi120.c                     内核模块：kprobe + 强制 DSI 时钟切换
+    build.sh                     编译脚本（WSL，需设备 .config 同步）
+    setup_buildroot.sh           一次性构建环境准备
+    patch_sig_enforce.py         离线 boot 镜像签名绕过补丁
+    load_module.c                finit_module() 包装器（Magisk shell 用）
+    README.md                    模块构建/加载/参数文档
 pico-refresh-selector/
   app/src/main/java/com/picoxr/refreshselector/RefreshRateHook.java
   app/src/main/assets/xposed_init
@@ -582,7 +589,11 @@ docs/
 - [x] 提取 LS026B3SA 完整配置（timing/PHY/DSC/TCON），推导 120 Hz 自洽参数
 - [x] 实机验证三个变体 DTBO，全部黑屏花屏
 - [x] 通过 regmap 直读 PLL 寄存器 + kprobe，证实驱动从不调用时钟切换函数
-- [x] **最终结论：120 Hz 不可行，根因是驱动层而非配置层**
+- [x] **DTBO 结论：120 Hz 在 DTBO 层面不可行，根因是驱动层而非配置层**
+- [x] 绕过内核模块签名强制（`sig_enforce` 数据变量补丁）
+- [x] 构建并加载 dsi120 kprobe 内核模块，注册 `dsi_display_set_mode` 和 `dsi_clk_set_pixel_clk_rate` 探针
+- [ ] 触发 72↔90 Hz 切换，捕获 DSI clock handle
+- [ ] 在 workqueue 中调用 `dsi_clk_set_pixel_clk_rate()`，验证 120 Hz 时钟切换
 - [ ] 在原始 DTBO 上完成 72↔90 运行时即时切换的稳定性验证
 - [ ] 扩展到 `system_server` 修正 `DisplayModeDirector`，做到开机自动生效
 - [ ] 提供 Magisk 模块形式的一键安装
@@ -1125,6 +1136,13 @@ pico4-display-analysis/
   LS026B3SA_120HZ_FULL_CONFIG.md full configuration derivation and on-device verification
   pll_90hz_baseline.txt           90 Hz stock PLL register baseline (292 registers)
   pll_120hz.txt                   120 Hz PLL registers (diff vs baseline proves clock never switched)
+  dsi120/
+    dsi120.c                     kernel module: kprobe + forced DSI clock switch
+    build.sh                     build script (WSL, requires device .config sync)
+    setup_buildroot.sh           one-time buildroot preparation
+    patch_sig_enforce.py         offline boot-image signature bypass patcher
+    load_module.c                finit_module() wrapper for Magisk shell
+    README.md                    module build/load/parameter documentation
 pico-refresh-selector/
   app/src/main/java/com/picoxr/refreshselector/RefreshRateHook.java
   app/src/main/assets/xposed_init
@@ -1150,7 +1168,11 @@ docs/
 - [x] Extract full LS026B3SA configuration (timing/PHY/DSC/TCON), derive self-consistent 120 Hz parameters
 - [x] Flash and test three DTBO variants on-device — all black-screened with a corrupted band
 - [x] Read PLL registers via regmap + kprobe, prove the driver never calls the clock-switch function
-- [x] **Final verdict: 120 Hz is not achievable — the root cause is in the driver layer, not the configuration**
+- [x] **DTBO verdict: 120 Hz is infeasible at the DTBO level — the root cause is in the driver layer, not the configuration**
+- [x] Bypass kernel module signature enforcement (`sig_enforce` data variable patch)
+- [x] Build and load the dsi120 kprobe kernel module, register probes on `dsi_display_set_mode` and `dsi_clk_set_pixel_clk_rate`
+- [ ] Trigger a 72↔90 Hz switch to capture the DSI clock handle
+- [ ] Call `dsi_clk_set_pixel_clk_rate()` from the workqueue and verify the 120 Hz clock switch
 - [ ] Verify stable live 72<->90 switching on the stock DTBO
 - [ ] Extend into `system_server` to fix `DisplayModeDirector` and apply the rate at boot
 - [ ] Ship a Magisk module for one-step installation
@@ -1682,6 +1704,13 @@ pico4-display-analysis/
   LS026B3SA_120HZ_FULL_CONFIG.md вывод полной конфигурации и проверка на устройстве
   pll_90hz_baseline.txt          заводская база регистров PLL на 90 Гц (292 шт.)
   pll_120hz.txt                  регистры PLL на 120 Гц (diff с базой доказывает, что часы не переключились)
+  dsi120/
+    dsi120.c                     модуль ядра: kprobe + принудительное переключение часов DSI
+    build.sh                     скрипт сборки (WSL, требует синхронизации .config с устройством)
+    setup_buildroot.sh           одноразовая подготовка сборочного окружения
+    patch_sig_enforce.py         офлайн-патчер обхода подписи в boot-образе
+    load_module.c                обёртка finit_module() для Magisk shell
+    README.md                    документация по сборке, загрузке и параметрам модуля
 pico-refresh-selector/
   app/src/main/java/com/picoxr/refreshselector/RefreshRateHook.java
   app/src/main/assets/xposed_init
@@ -1707,7 +1736,11 @@ docs/
 - [x] Извлечь полную конфигурацию LS026B3SA, вывести самосогласованные параметры 120 Гц
 - [x] Прошить и проверить три варианта DTBO — все дали чёрный экран с искажениями
 - [x] Через regmap и kprobe доказать: драйвер не вызывает функцию переключения часов
-- [x] **Итог: 120 Гц недостижимы — корень проблемы в драйвере, а не в конфигурации**
+- [x] **Итог по DTBO: 120 Гц недостижимы на уровне DTBO — корень проблемы в драйвере, а не в конфигурации**
+- [x] Обойти принудительную подпись модулей ядра (патч переменной `sig_enforce`)
+- [x] Собрать и загрузить kprobe-модуль dsi120, зарегистрировать пробы на `dsi_display_set_mode` и `dsi_clk_set_pixel_clk_rate`
+- [ ] Вызвать переключение 72↔90 Гц для захвата дескриптора DSI clock
+- [ ] Вызвать `dsi_clk_set_pixel_clk_rate()` из workqueue и проверить переключение часов на 120 Гц
 - [ ] Проверить стабильное переключение 72<->90 на ходу на исходном DTBO
 - [ ] Расширить хук на `system_server`, починить `DisplayModeDirector` и применять частоту при загрузке
 - [ ] Выпустить модуль Magisk для установки в один шаг
