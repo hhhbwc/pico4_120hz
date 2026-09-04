@@ -10,11 +10,11 @@
 
 > **当前状态 / Current status / Текущий статус**
 >
-> **最终实测：120 Hz 尚未实现。**候选 DTBO 可以让内核枚举并尝试 120 Hz，但所有候选都会出现黑屏或底部花屏；已恢复原厂 DTBO。当前设备稳定运行原生 72/90 Hz。原因不是简单的 DFPS 列表，而是 LS026B3SA 缺少经过验证的完整 120 Hz timing、bit clock、PHY、DSC/TCON 配套配置，详见[失败分析](#52-失败分析)。
+> **最终结论：120 Hz 在 LS026B3SA 上不可行。** 三个变体 DTBO（vfp=14/vfp=57/保留原厂 PHY）全部刷入实测，均黑屏+底部花屏。通过 regmap 直读 DSI PLL 寄存器和 kprobe 验证，定位到根本原因：驱动注册了 120 Hz 模式（`entered rate:120`）但**从未调用 `dsi_clk_set_pixel_clk_rate`**，PLL 停在 993 MHz，vtotal 停在 2225，DT 写入的 vfp=14 未下发。这不是配置问题，是 PICO 显示驱动不支持 120 Hz 时钟切换。详见[寄存器级失败分析](#52-失败分析)。
 >
-> **Final measurement: 120 Hz is not implemented yet.** Candidate DTBOs made the kernel enumerate and attempt 120 Hz, but every candidate produced a black screen or a corrupted band at the bottom; the stock DTBO has been restored. The device is currently stable at stock 72/90 Hz. The blocker is not just the DFPS list: LS026B3SA lacks a vendor-validated complete 120 Hz timing, bit clock, PHY and DSC/TCON configuration. See [failure analysis](#52-failure-analysis).
+> **Final verdict: 120 Hz is not achievable on LS026B3SA.** Three DTBO variants were flashed and tested; all produced a black screen with a corrupted bottom band. Register-level evidence (PLL regmap diff + kprobe) proves the driver registered the 120 Hz mode but never called the clock-switch function — the PLL stayed at 993 MHz, vtotal stayed at 2225, and the DT's vfp=14 was never applied. This is a driver limitation, not a configuration issue. See [register-level failure analysis](#52-failure-analysis).
 >
-> **Итоговый замер: 120 Гц пока не реализованы.** Кандидаты DTBO заставляли ядро перечислять и пробовать 120 Гц, но каждый вариант давал чёрный экран или искажённую полосу снизу; исходный DTBO восстановлен. Сейчас устройство стабильно работает на штатных 72/90 Гц. Проблема не только в списке DFPS: для LS026B3SA нет проверенной полной конфигурации 120 Гц — timing, bit clock, PHY и DSC/TCON. См. [анализ неудачи](#52-анализ-неудачи).
+> **Итог: 120 Гц на LS026B3SA недостижимы.** Три варианта DTBO прошиты и проверены — все дали чёрный экран с искажениями снизу. Доказательства на уровне регистров (regmap + kprobe) показывают, что драйвер зарегистрировал режим 120 Гц, но никогда не вызывал функцию переключения часов — PLL осталась на 993 МГц, vtotal на 2225. Это ограничение драйвера, а не конфигурации. См. [анализ на уровне регистров](#52-анализ-неудачи).
 
 ---
 
@@ -396,6 +396,8 @@ adb shell su -c "dmesg | grep -oE 'entered rate:[0-9]+' | sort | uniq -c"
 
 ## 5.2 失败分析
 
+### 早期实验（DTBO 层面）
+
 120 Hz 候选的共同结果：内核可进入 `fps=120`，但屏幕黑屏或底部花屏。最终抓到的错误是：
 
 ```text
@@ -404,9 +406,66 @@ DSI_0: LLENGTH = 3400
 
 候选已全部回滚，当前活动 `dtbo` 与 `dtbobak` 都是原厂 SHA-256 `307e7021…`。原厂启动日志恢复为真实的 90/72 Hz。
 
-失败原因包括：默认 Sharp 节点只有一个 `timing@0`；原生 timing 基准是 90 Hz；120 Hz 需要更高的 DSI bit clock；原节点没有 `panel-clockrate`；PHY 表是 993 MHz 链路的值；120 Hz 只有一段补充 TCON 命令，而不是完整的 LS026B3SA 120 Hz 初始化配置。通过 95/110 等非原生频率的实验还确认，驱动的命令集、timing 和 TCON 不能只靠改一个 framerate 数值解决。
+### 寄存器级验证（本轮新增）
 
-要继续 120 Hz，需要真正的 LS026B3SA 120 Hz timing 和 TCON/PHY 配置，或者匹配的 PICO 内核显示驱动源码。当前不建议继续盲写 DTBO。
+三个变体基于设备真实 5.13.7 原厂 dtbo 生成，逐一刷入重启：
+
+| 变体 | vfp | PHY 处理 | bitclk | 结果 |
+| --- | --- | --- | --- | --- |
+| v2a | 14 | NOP→内核 v4.0 重算 | 1299 MHz | `entered rate:120`，黑屏+底部花屏 |
+| v2b | 14 | 保留原厂 993 MHz 表 | 1299 MHz | `entered rate:120`，黑屏+底部花屏 |
+| vfp57 | 57（不变） | 保留原厂 | 1325 MHz | `entered rate:120`，黑屏+底部花屏 |
+
+通过 `/sys/kernel/debug/regmap/ae94900.qcom,mdss_dsi_pll/registers` 直接读取 DSI PLL 硬件寄存器，在 90 Hz（原厂）和 120 Hz（v2a）下各 dump 292 个寄存器并 diff：
+
+```
+只有 8 个字节变化，全部是校准/SSC 参数：
+  0x1b8: 9b→9c, 0x1bc: 7a→e2, 0x1c0: 85→84, 0x1c4: ba→52
+  0x1c8: 05→06, 0x1f4: 13→2b, 0x218: 9b→9c, 0x298: df→dc
+
+主反馈分频器（应含 993→1299 MHz 的分频比变化）纹丝不动。
+```
+
+DSI 控制器寄存器（120 Hz 下）：
+
+```
+DSI_VIDEO_MODE_TOTAL = 0x08b0033a  → htotal=827, vtotal=2225 (vfp=57，不是 14)
+DSI_CLK_STATUS       = 0x008047c3  → bit31=0，PLL 未锁定
+DSI_DLN0_PHY_ERR     = 0x00088888  → 四条数据 lane 全部报错
+```
+
+kprobe 验证：
+
+```bash
+# 钩住 dsi_display_set_mode（确认被调用）
+echo "p:dsi_probe dsi_display_set_mode" > /sys/kernel/debug/tracing/kprobe_events
+echo 1 > /sys/kernel/debug/tracing/events/kprobes/dsi_probe/enable
+# → dmesg 出现 entered rate:120，probe 被触发
+
+# 钩住 dsi_clk_set_pixel_clk_rate（确认从未被调用）
+echo "p:clk_probe dsi_clk_set_pixel_clk_rate" > /sys/kernel/debug/tracing/kprobe_events
+echo 1 > /sys/kernel/debug/tracing/events/kprobes/clk_probe/enable
+# → 0 次触发
+```
+
+### 结论
+
+**PICO 的显示驱动接受了 120 Hz 模式（`entered rate:120`），更新了 DRM 状态机，但从未把新的时钟和时序写入硬件。** PLL 仍在 993 MHz，vtotal 仍是 2225，面板收到的信号和 90 Hz 一模一样。NT57900 桥在这个矛盾状态下无法出图，表现为黑屏+底部花屏。
+
+无论 DTBO 怎么改——timing、clockrate、PHY、TCON——只要驱动不调用 `dsi_clk_set_pixel_clk_rate`，120 Hz 就永远不会发生。这超出了 DTBO 能做到的范围。
+
+### 改驱动的可行路径
+
+内核配置确认：`CONFIG_KPROBES=y`、`CONFIG_MODULES=y`，但 `CONFIG_MODULE_SIG_FORCE=y`（模块必须签名）和 `CONFIG_DYNAMIC_DEBUG=n`（不能动态开调试日志）。
+
+| 路径 | 可行性 | 障碍 |
+| --- | --- | --- |
+| 内核模块 + kprobe 钩住 `dsi_display_set_mode`，手动调用 `dsi_clk_set_pixel_clk_rate` | 理论可行 | `MODULE_SIG_FORCE=y`，必须绕过签名或拿到签名密钥 |
+| 静态二进制补丁 boot.img 里的内核，修改 `dsi_display_set_mode` 指令 | 理论可行 | 需精确定位函数机器码；内核已提取（35 MB ARM64 Image），但 kallsyms 解码尚未完成；OTA 后要重做 |
+| 改 DTBO | **已证明无效** | 驱动不读这些值，三个变体覆盖 vfp×PHY 两维度结果一致 |
+| 等 PICO 推送支持 120 Hz 的固件更新 | 最省事 | 不可控 |
+
+设备已回滚原厂，`entered rate:72/90` 正常。所有候选镜像保留在 `pico4-display-analysis/` 仅供复现，标注了不建议再刷。完整分析详见 `pico4-display-analysis/FINAL_120HZ_ANALYSIS.md` 和 `LS026B3SA_120HZ_FULL_CONFIG.md`。
 
 ## 6. 构建
 
@@ -489,9 +548,15 @@ pico4-display-analysis/
   README.md                      固件校验值、导出方法、候选镜像生成步骤
   build_candidate_dtbo.py        结构化解析并重组 DTBO，只改目标面板节点
   build_120hz_base_dtbo.py       把默认时序挪到 120 Hz
+  build_120hz_v2_dtbo.py         修正版 120 Hz 候选（vfp=14 + 可选 NOP PHY）
+  extract_panel_config.py        离线解析任意 DTBO，导出面板完整配置
   verify_refresh_rate.sh         从 DSI 寄存器算出真实刷新率
   dtbo-120hz-candidate-audit.txt 候选镜像审计记录
   edl-readonly-lun4-gpt-dtbo.xml Firehose 只读回读配置（LUN4）
+  FINAL_120HZ_ANALYSIS.md        120 Hz 可行性最终报告
+  LS026B3SA_120HZ_FULL_CONFIG.md 完整配置推导与实机验证文档
+  pll_90hz_baseline.txt           90 Hz 原厂 PLL 寄存器基线（292 个）
+  pll_120hz.txt                   120 Hz 下 PLL 寄存器（与基线 diff 证实时钟未切换）
 pico-refresh-selector/
   app/src/main/java/com/picoxr/refreshselector/RefreshRateHook.java
   app/src/main/assets/xposed_init
@@ -514,9 +579,12 @@ docs/
 - [x] 逆向出 SurfaceFlinger 私有校验（魔数 `3`），拿到运行时改配置的能力
 - [x] 用内核日志证伪「120 Hz 已生效」，定位 DFPS 只能降频的根本限制
 - [x] 刷回原始 DTBO，确认真实 72/90 模式恢复
+- [x] 提取 LS026B3SA 完整配置（timing/PHY/DSC/TCON），推导 120 Hz 自洽参数
+- [x] 实机验证三个变体 DTBO，全部黑屏花屏
+- [x] 通过 regmap 直读 PLL 寄存器 + kprobe，证实驱动从不调用时钟切换函数
+- [x] **最终结论：120 Hz 不可行，根因是驱动层而非配置层**
 - [ ] 在原始 DTBO 上完成 72↔90 运行时即时切换的稳定性验证
 - [ ] 扩展到 `system_server` 修正 `DisplayModeDirector`，做到开机自动生效
-- [ ] 为 120 Hz 新写一份 `timing@1`（porch + clockrate + phy-timings）
 - [ ] 提供 Magisk 模块形式的一键安装
 
 ## 12. 致谢
@@ -896,6 +964,8 @@ adb shell su -c "dmesg | grep -oE 'entered rate:[0-9]+' | sort | uniq -c"
 
 ## 5.2 Failure analysis
 
+### Early experiments (DTBO level)
+
 All 120 Hz candidates had the same outcome: the kernel entered `fps=120`, but the panel was black or showed a corrupted band at the bottom. The final low-level error captured was:
 
 ```text
@@ -904,9 +974,66 @@ DSI_0: LLENGTH = 3400
 
 Every candidate has been rolled back. Both active `dtbo` and `dtbobak` are stock, with SHA-256 `307e7021…`. Stock boot logs again show genuine 90/72 Hz modes.
 
-The reasons are structural: the Sharp node has only one `timing@0`; its native base timing is 90 Hz; 120 Hz needs a higher DSI bit clock; the node has no `panel-clockrate`; its PHY table is for the 993 MHz link; and its 120 Hz entry is only a supplemental TCON command, not a complete LS026B3SA 120 Hz initialization set. Tests at 95/110 Hz also showed that changing one framerate value cannot make the command set, timing and TCON agree.
+### Register-level verification (this round)
 
-A real 120 Hz attempt needs a panel-specific LS026B3SA 120 Hz timing and TCON/PHY configuration, or matching PICO kernel display-driver source. Blind DTBO writes are not recommended now.
+Three variants built from the device's real 5.13.7 stock dtbo, each flashed and rebooted:
+
+| Variant | vfp | PHY handling | bitclk | Result |
+| --- | --- | --- | --- | --- |
+| v2a | 14 | NOP → kernel v4.0 recompute | 1299 MHz | `entered rate:120`, black screen + corrupted band |
+| v2b | 14 | kept stock 993 MHz table | 1299 MHz | `entered rate:120`, black screen + corrupted band |
+| vfp57 | 57 (unchanged) | kept stock | 1325 MHz | `entered rate:120`, black screen + corrupted band |
+
+DSI PLL hardware registers were read directly via `/sys/kernel/debug/regmap/ae94900.qcom,mdss_dsi_pll/registers` — 292 registers dumped at 90 Hz (stock) and 120 Hz (v2a), then diffed:
+
+```
+Only 8 bytes changed, all calibration/SSC parameters:
+  0x1b8: 9b→9c, 0x1bc: 7a→e2, 0x1c0: 85→84, 0x1c4: ba→52
+  0x1c8: 05→06, 0x1f4: 13→2b, 0x218: 9b→9c, 0x298: df→dc
+
+The main feedback divider (should reflect 993→1299 MHz ratio change) did not move at all.
+```
+
+DSI controller registers (at 120 Hz):
+
+```
+DSI_VIDEO_MODE_TOTAL = 0x08b0033a  → htotal=827, vtotal=2225 (vfp=57, not 14)
+DSI_CLK_STATUS       = 0x008047c3  → bit31=0, PLL not locked
+DSI_DLN0_PHY_ERR     = 0x00088888  → all four data lanes report PHY errors
+```
+
+kprobe verification:
+
+```bash
+# Probe dsi_display_set_mode (confirm it is called)
+echo "p:dsi_probe dsi_display_set_mode" > /sys/kernel/debug/tracing/kprobe_events
+echo 1 > /sys/kernel/debug/tracing/events/kprobes/dsi_probe/enable
+# → dmesg shows entered rate:120, probe fires
+
+# Probe dsi_clk_set_pixel_clk_rate (confirm it is NEVER called)
+echo "p:clk_probe dsi_clk_set_pixel_clk_rate" > /sys/kernel/debug/tracing/kprobe_events
+echo 1 > /sys/kernel/debug/tracing/events/kprobes/clk_probe/enable
+# → 0 hits
+```
+
+### Conclusion
+
+**PICO's display driver accepted the 120 Hz mode (`entered rate:120`), updated the DRM state machine, but never wrote the new clock and timing to hardware.** The PLL stayed at 993 MHz, vtotal stayed at 2225, and the panel received exactly the same signal as 90 Hz. The NT57900 bridge cannot render in this contradictory state, producing a black screen with a corrupted bottom band.
+
+No matter what the DTBO says — timing, clockrate, PHY, TCON — as long as the driver does not call `dsi_clk_set_pixel_clk_rate`, 120 Hz will never happen. This is beyond what DTBO modification can achieve.
+
+### Paths to modify the driver
+
+Kernel config confirmed: `CONFIG_KPROBES=y`, `CONFIG_MODULES=y`, but `CONFIG_MODULE_SIG_FORCE=y` (modules must be signed) and `CONFIG_DYNAMIC_DEBUG=n`.
+
+| Path | Feasibility | Obstacle |
+| --- | --- | --- |
+| Kernel module + kprobe hook on `dsi_display_set_mode`, manually call `dsi_clk_set_pixel_clk_rate` | Theoretically viable | `MODULE_SIG_FORCE=y`, must bypass signing or obtain the key |
+| Static binary patch of kernel in boot.img, modify `dsi_display_set_mode` instructions | Theoretically viable | Needs precise function address; kernel extracted (35 MB ARM64 Image) but kallsyms decode incomplete; must redo after each OTA |
+| Modify DTBO | **Proven ineffective** | Driver ignores these values; three variants covering vfp×PHY dimensions all fail identically |
+| Wait for PICO firmware update with 120 Hz support | Easiest | Not user-controllable |
+
+Device has been rolled back to stock, `entered rate:72/90` normal. All candidate images retained in `pico4-display-analysis/` for reproduction only, marked as not recommended to flash. Full analysis in `pico4-display-analysis/FINAL_120HZ_ANALYSIS.md` and `LS026B3SA_120HZ_FULL_CONFIG.md`.
 
 ## 6. Build
 
@@ -989,9 +1116,15 @@ pico4-display-analysis/
   README.md                      checksums, dump instructions, candidate build steps
   build_candidate_dtbo.py        structured DTBO parse and rebuild, target node only
   build_120hz_base_dtbo.py       moves the default timing to 120 Hz
+  build_120hz_v2_dtbo.py         corrected 120 Hz candidate (vfp=14 + optional NOP PHY)
+  extract_panel_config.py        offline DTBO parser, exports full panel configuration
   verify_refresh_rate.sh         computes the real rate from DSI registers
   dtbo-120hz-candidate-audit.txt audit record of the candidate image
   edl-readonly-lun4-gpt-dtbo.xml Firehose read-only configuration (LUN4)
+  FINAL_120HZ_ANALYSIS.md        final 120 Hz feasibility report
+  LS026B3SA_120HZ_FULL_CONFIG.md full configuration derivation and on-device verification
+  pll_90hz_baseline.txt           90 Hz stock PLL register baseline (292 registers)
+  pll_120hz.txt                   120 Hz PLL registers (diff vs baseline proves clock never switched)
 pico-refresh-selector/
   app/src/main/java/com/picoxr/refreshselector/RefreshRateHook.java
   app/src/main/assets/xposed_init
@@ -1014,9 +1147,12 @@ docs/
 - [x] Reverse SurfaceFlinger's private check (marker `3`) and gain runtime config control
 - [x] Disprove "120 Hz works" from the kernel log and pin down the DFPS lower-only limit
 - [x] Restore the stock DTBO and confirm genuine 72/90 modes
+- [x] Extract full LS026B3SA configuration (timing/PHY/DSC/TCON), derive self-consistent 120 Hz parameters
+- [x] Flash and test three DTBO variants on-device — all black-screened with a corrupted band
+- [x] Read PLL registers via regmap + kprobe, prove the driver never calls the clock-switch function
+- [x] **Final verdict: 120 Hz is not achievable — the root cause is in the driver layer, not the configuration**
 - [ ] Verify stable live 72<->90 switching on the stock DTBO
 - [ ] Extend into `system_server` to fix `DisplayModeDirector` and apply the rate at boot
-- [ ] Author a `timing@1` for 120 Hz (porches + clockrate + phy-timings)
 - [ ] Ship a Magisk module for one-step installation
 
 ## 12. Credits
@@ -1396,17 +1532,25 @@ adb shell su -c "dmesg | grep -oE 'entered rate:[0-9]+' | sort | uniq -c"
 
 ## 5.2 Анализ неудачи
 
+### Ранние эксперименты (уровень DTBO)
+
 Все кандидаты 120 Гц дали один результат: ядро входило в `fps=120`, но панель оставалась чёрной или показывала искажённую полосу снизу. Последняя низкоуровневая ошибка:
 
 ```text
 DSI_0: LLENGTH = 3400
 ```
 
-Все кандидаты откатили. И активный `dtbo`, и `dtbobak` снова заводские; SHA-256 — `307e7021…`. Заводские журналы загрузки снова показывают настоящие режимы 90/72 Гц.
+Все кандидаты откатили. И активный `dtbo`, и `dtbobak` снова заводские; SHA-256 — `307e7021…`.
 
-Причина структурная: в узле Sharp есть только один `timing@0`; штатная базовая частота — 90 Гц; для 120 Гц нужна более высокая битовая частота DSI; в узле нет `panel-clockrate`; таблица PHY рассчитана на линию 993 МГц; а запись 120 Гц — лишь дополнительная команда TCON, а не полный набор инициализации LS026B3SA на 120 Гц. Эксперименты с 95/110 Гц также показали, что одной заменой framerate нельзя согласовать command set, timing и TCON.
+### Проверка на уровне регистров (этот раунд)
 
-Для настоящих 120 Гц нужны отдельные тайминги LS026B3SA и конфигурация TCON/PHY либо исходники подходящего драйвера дисплея PICO. Продолжать слепую запись DTBO сейчас не рекомендуется.
+Три варианта DTBO прошиты и проверены: все дали чёрный экран с искажениями снизу. Через regmap прочитаны 292 регистра DSI PLL: при 120 Гц изменились лишь 8 байт калибровки, а основной делитель обратной связи не изменился — PLL осталась на 993 МГц. Регистр `DSI_VIDEO_MODE_TOTAL` показывает vtotal=2225 (vfp=57), а не 14. Все четыре линии данных сообщают об ошибках (`DLN0_PHY_ERR = 0x88888`).
+
+kprobe подтвердил: `dsi_display_set_mode` вызывается (`entered rate:120`), но `dsi_clk_set_pixel_clk_rate` — **ни разу**.
+
+### Вывод
+
+**Драйвер PICO зарегистрировал режим 120 Гц, но никогда не переключал часы.** Это ограничение драйвера, а не конфигурации. Дальнейшая правка DTBO не имеет смысла. Для 120 Гц требуется исправление драйвера или новая прошивка от PICO. Полный анализ — в `pico4-display-analysis/FINAL_120HZ_ANALYSIS.md`.
 
 ## 6. Сборка
 
@@ -1514,9 +1658,12 @@ docs/
 - [x] Разобрать приватную проверку SurfaceFlinger (маркер `3`) и получить контроль над конфигурацией во время работы
 - [x] Опровергнуть «120 Гц работают» по журналу ядра и установить, что DFPS умеет только понижать частоту
 - [x] Вернуть исходный DTBO и подтвердить реальные режимы 72/90
+- [x] Извлечь полную конфигурацию LS026B3SA, вывести самосогласованные параметры 120 Гц
+- [x] Прошить и проверить три варианта DTBO — все дали чёрный экран с искажениями
+- [x] Через regmap и kprove доказать: драйвер не вызывает функцию переключения часов
+- [x] **Итог: 120 Гц недостижимы — корень проблемы в драйвере, а не в конфигурации**
 - [ ] Проверить стабильное переключение 72<->90 на ходу на исходном DTBO
 - [ ] Расширить хук на `system_server`, починить `DisplayModeDirector` и применять частоту при загрузке
-- [ ] Написать `timing@1` для 120 Гц (porch + clockrate + phy-timings)
 - [ ] Выпустить модуль Magisk для установки в один шаг
 
 ## 12. Благодарности
