@@ -18,6 +18,8 @@ key.properties
 *.apk
 *.elf
 *.mbn
+# Compiled kernel modules (proprietary, built against this device's kernel).
+*.ko
 
 # Research checkouts
 .research/
