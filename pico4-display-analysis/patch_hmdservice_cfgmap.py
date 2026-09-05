@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Patch libpxrhmdservice.so config-id constants for the v3 DTBO mode order.
 
-v5 "init-at-120" mapping: ALL rates -> cfg0. The v2 DTBO (dfps
-<120 90 72>) makes cfg0 = 120 = the preferred mode, so the panel is
-initialized at 120 Hz with the vendor post-120 NT57900 sequence and
-NEVER switches afterwards (the bottom-half garble came from panel init
-at the 90 timing followed by a seamless DFPS switch that cannot re-run
-panel init commands). The 90/72 modes exist but stay unreachable.
+v7 "true three-rate" mapping for the v6 DTBO (kernel mode order
+[120, 90, 72] -> cfg0=120, cfg1=90, cfg2=72): every rate request lands
+on its REAL config. The shell's legitimate 72 Hz idle request now
+succeeds (killing the endless retry storm that burned CPU), and games
+switch the panel to 120 for real. Panel NT57900 registers stay on the
+120 config across DFPS switches; the 72/90 visuals were verified
+on-device.
 """
 from __future__ import annotations
 
@@ -19,9 +20,9 @@ from pathlib import Path
 SRC = Path("libpxrhmdservice.so")
 DST = Path("libpxrhmdservice.patched.so")
 PATCHES = {  # vaddr == file offset (LOAD delta 0)
-    0x17C20: (0, 3),  # 72 Hz: cfg 1 -> 0
-    0x17B18: (0, 3),  # 120 Hz: cfg 2 -> 0
-    0x17B80: (0, 3),  # 90 Hz: cfg 0 unchanged
+    0x17C20: (2, 3),  # 72 Hz: cfg 1 -> 2 (real 72 config)
+    0x17B18: (0, 3),  # 120 Hz: cfg 2 -> 0 (real 120 config)
+    0x17B80: (1, 3),  # 90 Hz: cfg 0 -> 1 (real 90 config)
 }
 
 

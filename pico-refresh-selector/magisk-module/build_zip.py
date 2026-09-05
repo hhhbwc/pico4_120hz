@@ -23,7 +23,10 @@ def add(zf: zipfile.ZipFile, arcname: str, src: Path, mode: int) -> None:
     info = zipfile.ZipInfo(arcname)
     info.external_attr = mode << 16
     info.compress_type = zipfile.ZIP_DEFLATED
-    zf.writestr(info, src.read_bytes())
+    data = src.read_bytes()
+    if arcname.endswith(".sh") or arcname == "module.prop":
+        data = data.replace(b"\r\n", b"\n")  # shell cannot parse CRLF
+    zf.writestr(info, data)
 
 
 def main() -> int:
