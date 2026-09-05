@@ -327,7 +327,7 @@ Panelook 页面本身会触发滑块验证，上述 Panelook 参数来自搜索�
           setAllowedDisplayConfigs(token, {configIndex, 3})  ← 立即生效
 ```
 
-菜单只列出真实存在的 display config。当前原厂 DTBO 下是 72 与 90；120 选项已移除，因为对应候选会导致黑屏或花屏。
+菜单只列出真实存在的 display config。当前原厂 DTBO 下是 72 与 90；120 选项已移除，因为对应候选会导致黑屏或花屏。（2026-09-06 更新：刷入 v6 DTBO 后 120 成为真实配置，菜单可重新提供 120。）
 
 模块不修改 PICO Settings 的 APK，不改资源，不动任何分区。禁用模块或移除作用域即可完全恢复原生界面。
 
@@ -375,6 +375,8 @@ PxrCompositor: setRefreshRate:120.000000, current rate: 120.000000
 
 ## 5. 已知限制
 
+> ⚠️ 2026-09-06 更新：本节描述的是 v6 之前的历史状态。**当前设备刷入的是 v6 镜像并稳定运行 120 Hz**（见文首突破章节）；本节其余分析仍适用于理解早期候选为何失败。
+
 **候选 DTBO 已全部回滚，当前使用原始 DTBO。**原始 DTBO 的列表是 `<90 72>`，`max-refresh-rate = 90`，两档都是真实有效时序；所有 120 Hz 候选都已通过有线 ADB 回滚，不建议继续在设备上盲写。
 
 **90 Hz 是这块面板的原生档位。**面板名就叫 `sharp ls026b3sa 90hz video mode dsi panel`，`panel-framerate = 90`，DFPS 基准也是 90。它不需要时序改动。魔数 `3` 可以让 SurfaceFlinger 接受 90 Hz 配置，但实测 PICO 的系统服务随后会重新投票回 72 Hz，因此 72↔90 的稳定免重启切换尚未完成。
@@ -404,9 +406,13 @@ qcom,mdss-dsi-post-120-nt57900-on-command = ... b9 10 2c 01 cb # 明显不同
 adb shell su -c "dmesg | grep -oE 'entered rate:[0-9]+' | sort | uniq -c"
 ```
 
+（2026-09-06 更新：v6 + Magisk 模块方案下，开机首选配置即 120，`service.sh` 自动写 `sdk_refreshRate=120` 并修正 `sys.pvr`，重启后无需重新应用；下文是 v6 之前的历史描述。）
+
 **重启后需要重新应用。**SurfaceFlinger 每次启动都回到默认配置，`DisplayModeDirector` 的空集合问题依然存在。模块把选择记在 `Settings.Global`，每次 PICO Settings 启动时比对并补上；要完全无感需要把 hook 扩展到 `system_server`，还没做。
 
 ## 5.1 当前设备状态与结论
+
+（2026-09-06 更新：本节为 v6 之前的历史状态。**当前设备运行 v6 镜像**，活动 dtbo SHA-256 `f0c10d1dd04dd9a7c46b319758dbdd5f7540fe06aaf807377d23392c71aa20ea`，面板稳定运行 120 Hz；`dtbobak` 仍保持原厂。）
 
 设备当前已恢复原厂活动 DTBO，回读 SHA-256 为 `307e702182e731b76e8bc0a4aec131a53e1ddf82e96f2f416e2f49129e6d46ac`；`dtbobak` 同样保持原厂。原厂 Sharp LS026B3SA 节点重新公开真实的 90/72 Hz 模式。
 
@@ -484,6 +490,8 @@ echo 1 > /sys/kernel/debug/tracing/events/kprobes/clk_probe/enable
 | 静态二进制补丁 boot.img 里的内核，修改 `dsi_display_set_mode` 指令 | 理论可行 | kallsyms 解码已完成；`hexpatch_boot.py` 存在但为分析用脚本，当前优先走内核模块路径 |
 | 改 DTBO | **已证明无效** | 驱动不读这些值，三个变体覆盖 vfp×PHY 两维度结果一致 |
 | 等 PICO 推送支持 120 Hz 的固件更新 | 最省事 | 不可控 |
+
+（2026-09-06 更新：v6 已刷入并稳定运行 120 Hz，本段为历史记录。）
 
 设备已回滚原厂，`entered rate:72/90` 正常。所有候选镜像保留在 `pico4-display-analysis/` 仅供复现，标注了不建议再刷。完整分析详见 `pico4-display-analysis/FINAL_120HZ_ANALYSIS.md`、`LS026B3SA_120HZ_FULL_CONFIG.md` 和 `pico4-display-analysis/dsi120/README.md`。
 
@@ -925,7 +933,7 @@ shared     sdk_Recommand_refreshRate mirrors the same value
            setAllowedDisplayConfigs(token, {configIndex, 3})  <- applies at once
 ```
 
-The menu only lists display configs that really exist. With the stock DTBO it offers 72 and 90. The 120 entry is intentionally removed because every tested 120 Hz DTBO produced a black screen or corruption.
+The menu only lists display configs that really exist. With the stock DTBO it offers 72 and 90. The 120 entry is intentionally removed because every tested 120 Hz DTBO produced a black screen or corruption. (2026-09-06 update: with the v6 DTBO flashed, 120 is a real config and the menu can offer it again.)
 
 The module never patches the PICO Settings APK, never touches resources and never writes a partition. Disabling the module or removing its scope fully restores the stock UI.
 
@@ -973,6 +981,8 @@ PxrCompositor: setRefreshRate:120.000000, current rate: 120.000000
 
 ## 5. Known limitations
 
+> ⚠️ 2026-09-06 update: this describes the pre-v6 historical state. **The device currently runs the v6 image and holds a stable 120 Hz** (see the breakthrough section at the top); the rest of the analysis still explains why the early candidates failed.
+
 **All candidate DTBOs have been rolled back; the stock DTBO is active.** The stock DTBO lists `<90 72>` with `max-refresh-rate = 90`, and both are genuine valid timings. Every 120 Hz candidate was rolled back through wired ADB; further blind partition writes are not recommended.
 
 **90 Hz is this panel's native rate.** The panel is literally named `sharp ls026b3sa 90hz video mode dsi panel`, `panel-framerate = 90`, and the DFPS base is 90. It needs no timing work. The marker `3` makes SurfaceFlinger accept the 90 Hz config, but testing shows that a later PICO system-service vote returns it to 72 Hz, so stable reboot-free 72<->90 switching is not complete.
@@ -1001,6 +1011,8 @@ PICO/Sharp did prepare a 120 Hz supplemental TCON command, but testing showed th
 ```bash
 adb shell su -c "dmesg | grep -oE 'entered rate:[0-9]+' | sort | uniq -c"
 ```
+
+(2026-09-06 update: with the v6 + Magisk-module stack the boot preference is already 120 and `service.sh` writes `sdk_refreshRate=120` plus the `sys.pvr` fix, so nothing needs re-applying after a reboot; the text below is the pre-v6 description.)
 
 **The choice has to be re-applied after a reboot.** SurfaceFlinger returns to its default config on every start and the empty-allowed-set problem in `DisplayModeDirector` remains. The module stores the choice in `Settings.Global` and reconciles it whenever PICO Settings starts; making it fully transparent needs the hook extended into `system_server`, which is not done.
 
@@ -1074,6 +1086,8 @@ Kernel config confirmed: `CONFIG_KPROBES=y`, `CONFIG_MODULES=y`, but `CONFIG_MOD
 | Static binary patch of kernel in boot.img, modify `dsi_display_set_mode` instructions | Theoretically viable | kallsyms decode complete; `hexpatch_boot.py` exists as an analysis-only script; kernel module path is currently preferred |
 | Modify DTBO | **Proven ineffective** | Driver ignores these values; three variants covering vfp×PHY dimensions all fail identically |
 | Wait for PICO firmware update with 120 Hz support | Easiest | Not user-controllable |
+
+(2026-09-06 update: v6 is now flashed and runs a stable 120 Hz; this paragraph is historical.)
 
 Device has been rolled back to stock, `entered rate:72/90` normal. All candidate images retained in `pico4-display-analysis/` for reproduction only, marked as not recommended to flash. Full analysis in `pico4-display-analysis/FINAL_120HZ_ANALYSIS.md`, `LS026B3SA_120HZ_FULL_CONFIG.md`, and `pico4-display-analysis/dsi120/README.md`.
 
@@ -1209,7 +1223,7 @@ docs/
 - [x] Ship the Magisk flashable zip v1.0.0; verified on-device: stable 120 Hz, official app 120, 100+ fps in games
 - [x] Bypass kernel module signature enforcement (`sig_enforce` data variable patch)
 - [x] Build and load the dsi120 kprobe kernel module, register probes on `dsi_display_set_mode` and `dsi_clk_set_pixel_clk_rate`
-- [ ] Trigger a 72↔90 Hz switch to capture the DSI clock handle
+- [x] ~~Trigger a 72↔90 Hz switch to capture the DSI clock handle~~ (superseded by the v6 DTBO solution)
 - [ ] Call `dsi_clk_set_pixel_clk_rate()` from the workqueue and verify the 120 Hz clock switch
 - [ ] Verify stable live 72<->90 switching on the stock DTBO
 - [ ] Extend into `system_server` to fix `DisplayModeDirector` and apply the rate at boot
@@ -1559,6 +1573,8 @@ PxrCompositor: setRefreshRate:120.000000, current rate: 120.000000
 
 ## 5. Известные ограничения
 
+> ⚠️ Обновление 06.09.2026: здесь описано историческое состояние до v6. **На устройстве сейчас прошит образ v6 и стабильно работают 120 Гц** (см. раздел о прорыве в начале); остальной анализ по-прежнему объясняет, почему ранние кандидаты не сработали.
+
 **Все кандидаты DTBO откатаны; активен исходный DTBO.** В исходном DTBO список `<90 72>`, `max-refresh-rate = 90`, и оба режима являются настоящими корректными таймингами. Все кандидаты 120 Гц были откатаны через проводной ADB; дальнейшая слепая запись в раздел не рекомендуется.
 
 **90 Гц — родная частота этой панели.** Панель так и называется: `sharp ls026b3sa 90hz video mode dsi panel`, `panel-framerate = 90`, база DFPS тоже 90. Правки таймингов не нужны. Маркер `3` заставляет SurfaceFlinger принять конфигурацию 90 Гц, но проверка показала, что последующий голос системной службы PICO возвращает 72 Гц, поэтому стабильное переключение 72↔90 без перезагрузки ещё не завершено.
@@ -1776,7 +1792,7 @@ docs/
 - [x] Извлечь полную конфигурацию LS026B3SA, вывести самосогласованные параметры 120 Гц
 - [x] Прошить и проверить три варианта DTBO — все дали чёрный экран с искажениями
 - [x] Через regmap и kprobe доказать: драйвер не вызывает функцию переключения часов
-- [x] **Итог по DTBO: 120 Гц недостижимы на уровне DTBO — корень проблемы в драйвере, а не в конфигурации**
+- [x] ~~Итог по DTBO: 120 Гц недостижимы на уровне DTBO~~ (опровергнуто 06.09.2026: не хватало патча карты конфигурации, состояния сервиса конфигурации и инициализации панели; v6 достиг результата)
 - [x] Обойти принудительную подпись модулей ядра (патч переменной `sig_enforce`)
 - [x] Собрать и загрузить kprobe-модуль dsi120, зарегистрировать пробы на `dsi_display_set_mode` и `dsi_clk_set_pixel_clk_rate`
 - [ ] Вызвать переключение 72↔90 Гц для захвата дескриптора DSI clock
