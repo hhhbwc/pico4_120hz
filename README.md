@@ -287,21 +287,6 @@ dsi_phy_hw_v4_0_calc_clk_zero / calc_clk_trail_rec_min / calc_hs_zero / calc_hs_
 
 刷入前请确保 USB 线可用。注意这台设备虽然 `ro.boot.flash.locked=0`，但**fastboot 的 `flash` 命令被禁用**——能进 fastboot 却刷不了分区，唯一可用的离线刷写途径是 **EDL(9008)**。所以只要 ADB 还在就用 `dd` 回滚，`dtbobak` 全程保持原样作为第二道保险。刷入后用 `pico4-display-analysis/verify_refresh_rate.sh` 判断真实刷新率，不要看 dumpsys。
 
-### 2.7 公开面板资料与可信度
-
-公开资料能确认 `LS026B3SA` 系列的基础硬件信息，但没有找到 Sharp 官方 datasheet、DSC PPS、PHY 时序或 TCON 初始化表。
-
-- [Panelook LS026B3SA01X](https://www.panelook.com/LS026B3SA01X_Sharp_2.6_LCM_overview_64156.html)：搜索摘要显示 Sharp、2.6 英寸、2160×2160、MIPI、2 channels、4 data lanes，并标注 120 Hz。
-- [Panelook LS026B3SA01Y](https://www.panelook.com/LS026B3SA01Y_Sharp_2.6_LCM_overview_64157.html)：同系列的 Y 子型号，摘要也显示 2160×2160、MIPI、2 channels、4 data lanes、120 Hz。
-- [MyDoPoint LS026B3SA01X](https://www.mydopoint.com/lcd_LS026B3SA01X.html)：列出 Sharp、2.6 英寸、2160×2160、520 cd/m²、650:1、MIPI、WLED。
-- [JianXiang LS026B3SA 系列](https://www.jxg.tw/en/product_1569517.html)：将 LS026B3SA01/A/B/X 列为面向 PICO、Meta/Oculus 等 VR 设备的 Sharp 面板系列。
-- [PICO 4 官方规格](https://www.picoxr.com/global/products/pico4/specs)：确认 PICO 4 使用两块 2.56 英寸 Fast-LCD，每眼 2160×2160，官方刷新率为 72/90 Hz。
-- [PICO 4 官方产品页](https://www.picoxr.com/global/products/pico4)：同样把 PICO 4 的最高刷新率列为 90 Hz。
-- [52audio PICO 4 拆解](https://www.52audio.com/archives/150653.html)：确认两块 2.56 英寸、4320×2160、90 Hz Fast-LCD，但没有给出面板型号或 TCON。
-- [NT57900 经销商页面](https://www.displayamoled.com/sale-53602352-2-56-inch-vr-lcd-display-2160x2160-45-pins-mipi-interface-driving-ic-nt57900.html)：页面对应的是 ESHX026C4T-NH0，不是明确的 LS026B3SA01X，因此只能证明 NT57900 出现在相似 VR 面板中，不能证明它就是本机的 TCON 配置来源。
-
-Panelook 页面本身会触发滑块验证，上述 Panelook 参数来自搜索摘要，可靠性低于可直接访问的原始 datasheet。当前实机 DTBO 和内核证据优先级更高：本机原厂节点明确是 `sharp ls026b3sa 90hz video mode dsi panel`，真实模式为 72/90。
-
 ## 3. 模块做了什么
 
 模块包名 `com.picoxr.refreshselector`，作用域**仅** `com.picovr.settings`。
@@ -631,12 +616,8 @@ docs/
 - [ ] 在 workqueue 中调用 `dsi_clk_set_pixel_clk_rate()`，验证 120 Hz 时钟切换
 - [ ] 在原始 DTBO 上完成 72↔90 运行时即时切换的稳定性验证
 - [ ] 扩展到 `system_server` 修正 `DisplayModeDirector`，做到开机自动生效
-- [ ] 提供 Magisk 模块形式的一键安装
+- [x] 提供 Magisk 模块形式的一键安装（Releases v1.0.0）
 
-## 12. 致谢
-
-- [CreoleVR/quest-pro-display-overclock](https://github.com/CreoleVR/quest-pro-display-overclock) —— Qualcomm DSI DFPS 内存补丁思路的来源。注意它依赖 Quest Pro 专用内核模块与 Oculus 私有属性，**不能**直接刷入 PICO 4。
-- [hhhbwc/pico4-power-mode](https://github.com/hhhbwc/pico4-power-mode) —— PICO Settings 下拉菜单交互的参考。
 
 ---
 
@@ -892,21 +873,6 @@ Safety check: this node's `__local_fixups__` only references the phandle propert
 **Tested and rolled back.** This candidate was written to the active `dtbo` and tested after reboot; it produced a black screen with a corrupted band at the bottom. It was then rolled back to the stock DTBO through wired ADB. The failure included `DSI_0: LLENGTH = 3400`, indicating a mismatch between DSI transfer length and the LS026B3SA panel configuration.
 
 Have a USB cable available before flashing. Note that although this device reports `ro.boot.flash.locked=0`, **its fastboot has the `flash` command disabled** — fastboot can be entered but cannot write a partition, so the only usable offline path is **EDL (9008)**. Roll back with `dd` while ADB is alive, and `dtbobak` stays untouched throughout as a second safety net. After flashing, judge the real rate with `pico4-display-analysis/verify_refresh_rate.sh` rather than dumpsys.
-
-### 2.7 Public panel sources and confidence
-
-Public sources confirm the basic hardware information for the `LS026B3SA` family, but no Sharp datasheet, DSC PPS, PHY timing table or TCON initialization table was found.
-
-- [Panelook LS026B3SA01X](https://www.panelook.com/LS026B3SA01X_Sharp_2.6_LCM_overview_64156.html): search results identify Sharp, 2.6-inch, 2160x2160, MIPI, 2 channels, 4 data lanes and list 120 Hz.
-- [Panelook LS026B3SA01Y](https://www.panelook.com/LS026B3SA01Y_Sharp_2.6_LCM_overview_64157.html): the Y variant is similarly summarized as 2160x2160, MIPI, 2 channels, 4 data lanes and 120 Hz.
-- [MyDoPoint LS026B3SA01X](https://www.mydopoint.com/lcd_LS026B3SA01X.html): lists Sharp, 2.6-inch, 2160x2160, 520 cd/m2, 650:1, MIPI and WLED.
-- [JianXiang LS026B3SA family](https://www.jxg.tw/en/product_1569517.html): lists LS026B3SA01/A/B/X as a Sharp VR panel family for PICO, Meta/Oculus and similar devices.
-- [Official PICO 4 specifications](https://www.picoxr.com/global/products/pico4/specs): confirms two 2.56-inch Fast-LCD panels, 2160x2160 per eye and official 72/90 Hz modes.
-- [Official PICO 4 product page](https://www.picoxr.com/global/products/pico4): also lists 90 Hz as the maximum refresh rate.
-- [52audio PICO 4 teardown](https://www.52audio.com/archives/150653.html): confirms two 2.56-inch, 4320x2160, 90 Hz Fast-LCD panels, but not the panel model or TCON.
-- [NT57900 reseller page](https://www.displayamoled.com/sale-53602352-2-56-inch-vr-lcd-display-2160x2160-45-pins-mipi-interface-driving-ic-nt57900.html): describes ESHX026C4T-NH0, not an identified LS026B3SA01X, so it only proves that NT57900 appears in a similar VR panel and does not prove the TCON configuration in this device.
-
-The Panelook pages are protected by a slider; those parameters come from search snippets and have lower confidence than a primary datasheet. Device DTBO and kernel evidence takes priority: this unit's stock node is explicitly `sharp ls026b3sa 90hz video mode dsi panel`, with real 72/90 modes.
 
 ## 3. What the module does
 
@@ -1227,12 +1193,8 @@ docs/
 - [ ] Call `dsi_clk_set_pixel_clk_rate()` from the workqueue and verify the 120 Hz clock switch
 - [ ] Verify stable live 72<->90 switching on the stock DTBO
 - [ ] Extend into `system_server` to fix `DisplayModeDirector` and apply the rate at boot
-- [ ] Ship a Magisk module for one-step installation
+- [x] Ship a Magisk module for one-step installation (Releases v1.0.0)
 
-## 12. Credits
-
-- [CreoleVR/quest-pro-display-overclock](https://github.com/CreoleVR/quest-pro-display-overclock) — source of the Qualcomm DSI DFPS in-memory patching idea. It relies on a Quest Pro specific kernel module and Oculus private properties and **cannot** be flashed on a PICO 4.
-- [hhhbwc/pico4-power-mode](https://github.com/hhhbwc/pico4-power-mode) — reference for the PICO Settings dropdown interaction.
 
 ---
 
@@ -1486,21 +1448,6 @@ dsi_phy_hw_v4_0_calc_clk_zero / calc_clk_trail_rec_min / calc_hs_zero / calc_hs_
 **Проверено и откатано.** Кандидат был записан в активный `dtbo` и проверен после перезагрузки: получены чёрный экран и искажённая полоса снизу. Затем через проводной ADB выполнен откат к заводскому DTBO. В журнале появилась ошибка `DSI_0: LLENGTH = 3400`, то есть длина передачи DSI не совпала с конфигурацией LS026B3SA.
 
 Перед прошивкой держите наготове USB-кабель. Учтите: хотя устройство сообщает `ro.boot.flash.locked=0`, **в его fastboot отключена команда `flash`** — войти можно, но записать раздел нельзя, поэтому единственный рабочий офлайн-путь — **EDL (9008)**. Пока ADB работает, откатывайтесь через `dd`; `dtbobak` всё время остаётся нетронутым как вторая страховка. После прошивки определяйте реальную частоту с помощью `pico4-display-analysis/verify_refresh_rate.sh`, а не dumpsys.
-
-### 2.7 Открытые источники по панели и степень доверия
-
-Открытые источники подтверждают базовые характеристики семейства `LS026B3SA`, но найти официальный datasheet Sharp, DSC PPS, таблицу таймингов PHY или таблицу инициализации TCON не удалось.
-
-- [Panelook LS026B3SA01X](https://www.panelook.com/LS026B3SA01X_Sharp_2.6_LCM_overview_64156.html): в поисковом описании указаны Sharp, 2,6 дюйма, 2160x2160, MIPI, 2 канала, 4 линии данных и 120 Гц.
-- [Panelook LS026B3SA01Y](https://www.panelook.com/LS026B3SA01Y_Sharp_2.6_LCM_overview_64157.html): вариант Y с аналогичным описанием — 2160x2160, MIPI, 2 канала, 4 линии данных, 120 Гц.
-- [MyDoPoint LS026B3SA01X](https://www.mydopoint.com/lcd_LS026B3SA01X.html): Sharp, 2,6 дюйма, 2160x2160, 520 кд/м², 650:1, MIPI и WLED.
-- [Каталог JianXiang LS026B3SA](https://www.jxg.tw/en/product_1569517.html): перечисляет LS026B3SA01/A/B/X как семейство VR-панелей Sharp для PICO, Meta/Oculus и похожих устройств.
-- [Официальные характеристики PICO 4](https://www.picoxr.com/global/products/pico4/specs): две Fast-LCD панели 2,56 дюйма, 2160x2160 на глаз и официальные режимы 72/90 Гц.
-- [Официальная страница PICO 4](https://www.picoxr.com/global/products/pico4): также указывает 90 Гц как максимальную частоту.
-- [Разбор PICO 4 от 52audio](https://www.52audio.com/archives/150653.html): подтверждает две Fast-LCD панели 2,56 дюйма, 4320x2160 и 90 Гц, но не сообщает модель панели или TCON.
-- [Страница продавца NT57900](https://www.displayamoled.com/sale-53602352-2-56-inch-vr-lcd-display-2160x2160-45-pins-mipi-interface-driving-ic-nt57900.html): описывает ESHX026C4T-NH0, а не точно идентифицированную LS026B3SA01X; это не доказательство конфигурации TCON данного устройства.
-
-Страницы Panelook защищены слайдером, поэтому их параметры получены из поисковых описаний и имеют меньшую надёжность, чем данные первичного datasheet. Приоритет имеют DTBO и ядро устройства: штатный узел прямо называется `sharp ls026b3sa 90hz video mode dsi panel`, а реальные режимы — 72/90 Гц.
 
 ## 3. Что делает модуль
 
@@ -1799,12 +1746,7 @@ docs/
 - [ ] Вызвать `dsi_clk_set_pixel_clk_rate()` из workqueue и проверить переключение часов на 120 Гц
 - [ ] Проверить стабильное переключение 72<->90 на ходу на исходном DTBO
 - [ ] Расширить хук на `system_server`, починить `DisplayModeDirector` и применять частоту при загрузке
-- [ ] Выпустить модуль Magisk для установки в один шаг
-
-## 12. Благодарности
-
-- [CreoleVR/quest-pro-display-overclock](https://github.com/CreoleVR/quest-pro-display-overclock) — источник идеи патча DFPS в памяти для Qualcomm DSI. Он опирается на модуль ядра для Quest Pro и приватные свойства Oculus, поэтому **не может** быть прошит на PICO 4.
-- [hhhbwc/pico4-power-mode](https://github.com/hhhbwc/pico4-power-mode) — ориентир по взаимодействию с выпадающим меню настроек PICO.
+- [x] Выпустить модуль Magisk для установки в один шаг (Releases v1.0.0)
 
 ## 13. Лицензия
 
