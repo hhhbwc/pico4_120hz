@@ -10,11 +10,27 @@
 
 > **当前状态 / Current status / Текущий статус**
 >
-> **DTBO 层面的 120 Hz 已确认不可行**（三个变体均黑屏+花屏，寄存器级证据证实驱动从不调用时钟切换）。但内核模块路径已突破：`sig_enforce` 签名绕过成功，当前 probe-only 模块已加载并注册到 `dsi_display_set_mode`、`dsi_clk_set_pixel_clk_rate` 和 `dsi_clk_set_byte_clk_rate`；时钟调用仍未启用，正在确认 Phoenix BSP 的 handle 生命周期与完整切换序列。详见 [dsi120 内核模块](pico4-display-analysis/dsi120/README.md) 和[寄存器级失败分析](#52-失败分析)。
+> **✅ 2026-09-06：120 Hz 已完整达成并经实机验证。** 面板稳定运行 120 Hz（VSYNC 8333333 ns，双 DSI 控制器时钟精确切换至 1.325 GHz/lane，内核零错误，连续运行数小时），底部花屏已修复，官方帧率软件显示 120，游戏部分场景实测 100+ fps。完整方案 = **v6 DTBO**（真实 120 基时序 + DFPS `<120 90 72>` + vendor post-120 NT57900 面板初始化序列）+ **Magisk 模块**（`libpxrhmdservice.so` 配置映射补丁 + 开机 `sdk_refreshRate=120` 与 `sys.pvr` 修正）。**此前「DTBO 层面不可行」的结论已被推翻**——早期变体缺的是三块拼图：vendor 配置映射补丁（速率请求从未真正落到 120 配置）、配置服务开机状态链、以及面板初始化序列（NT57900 门极扫描时钟停留在 90 档寄存器）。dsi120 内核模块路径保留作历史文档。一键刷机包见 [Releases](https://github.com/hhhbwc/pico4_120hz/releases)。
 >
-> **DTBO-level 120 Hz is confirmed infeasible** (all three variants black-screened; register-level evidence proves the driver never calls the clock-switch function). However, the kernel-module path has broken through: the `sig_enforce` signature bypass works, and the current probe-only module registers probes on `dsi_display_set_mode`, `dsi_clk_set_pixel_clk_rate`, and `dsi_clk_set_byte_clk_rate`. Clock calls remain disabled while the Phoenix BSP handle lifetime and complete switch sequence are verified. See the [dsi120 kernel module](pico4-display-analysis/dsi120/README.md) and [register-level failure analysis](#52-failure-analysis).
+> **✅ 2026-09-06: 120 Hz fully achieved and verified on-device.** The panel runs stably at 120 Hz (VSYNC 8333333 ns, both DSI controllers clocked precisely at 1.325 GHz/lane, zero kernel errors, hours of continuous operation), the bottom garble is fixed, the official framerate app shows 120, and a real game exceeded 100 fps in parts. Full stack = **v6 DTBO** (real base-120 timing, DFPS `<120 90 72>`, vendor post-120 NT57900 panel-init packets) + **Magisk module** (`libpxrhmdservice.so` config-map patch + boot-time `sdk_refreshRate=120` / `sys.pvr` fix). **The earlier "infeasible at the DTBO level" verdict is overturned** — the early variants were missing three pieces: the vendor config-map patch (rate requests never actually landed on the 120 config), the boot-time configuration-service state, and the panel-init sequence (the NT57900 gate-scan clock stayed on its 90 Hz registers). The dsi120 kernel-module path is retained as history. Flashable zip in [Releases](https://github.com/hhhbwc/pico4_120hz/releases).
 >
-> **DTBO-уровень 120 Гц подтверждённо недостижим** (все три варианта дали чёрный экран; регистровые доказательства показывают, что драйвер не вызывает функцию переключения часов). Однако путь через модуль ядра прорван: обход подписи `sig_enforce` работает; текущий probe-only модуль зарегистрирован на `dsi_display_set_mode`, `dsi_clk_set_pixel_clk_rate` и `dsi_clk_set_byte_clk_rate`. Вызовы часов пока отключены, пока проверяются lifetime handle и полный порядок переключения в Phoenix BSP. См. [модуль ядра dsi120](pico4-display-analysis/dsi120/README.md) и [анализ на уровне регистров](#52-анализ-неудачи).
+> **✅ 06.09.2026: 120 Гц полностью достигнуты и проверены на устройстве.** Панель стабильно работает на 120 Гц (VSYNC 8333333 ns, оба DSI-контроллера точно на 1,325 ГГц/lane, ноль ошибок ядра), повреждение низа устранено, официальное приложение показывает 120, игра превышает 100 fps. Полный стек = **DTBO v6** (реальная база 120 Гц, DFPS `<120 90 72>`, пакеты инициализации post-120 NT57900) + **Magisk-модуль** (патч карты конфигурации `libpxrhmdservice.so` + исправление `sdk_refreshRate=120` / `sys.pvr` при загрузке). **Прежний вывод о недостижимости на уровне DTBO опровергнут** — ранним вариантам не хватало трёх частей: патча карты конфигурации, состояния сервиса конфигурации при загрузке и последовательности инициализации панели (развёртка NT57900 оставалась на регистрах 90 Гц). Путь через модуль ядра dsi120 сохранён как история. Прошиваемый zip — в [Releases](https://github.com/hhhbwc/pico4_120hz/releases).
+
+---
+
+# 🎉 2026-09-06 突破：120 Hz 完整方案（v6）
+
+在早期 DTBO 变体（2.6、5.2）失败之后，最终突破需要补齐三块缺失的拼图：
+
+1. **vendor 配置映射补丁**。`libpxrhmdservice.so` 把速率请求硬编码为 SF 配置索引（72→1、90→0、120→2，见 `setAllowedDisplayConfigs(display, [cfg, 3])`），而内核对 DFPS 模式的排序是「dfps[0] 固定在 cfg0，其余按 vtotal 升序」，实际顺序 [120, 90, 72] 与硬编码错位——速率请求从未真正落到 120 配置，这正是早期变体「entered rate:120 但时钟不变」的直接原因。补丁把所有速率请求指向 120 所在的配置，物理刷新率永不切换，不稳定的 72 档配置不可达。
+2. **面板初始化序列**。主 `on-command` 的 B9h 载荷 = `13 5F 02 64`（= post-90 的值），NT57900 门极扫描时钟被配置为 90 档；DFPS 切换只改主机时序、从不重发面板初始化 → 120 fps 数据按 90 的扫描速率接收，每帧仅约 75% 行被刷新，形成水平分界线 + 下方花屏。v6 把 vendor 自己的 post-120 数据包（B9h `10 2C 01 CB` / `0F 2C 01 CB` + ECh `05 46` / `04 E6`，44 字节、保持 FDT 4 字节对齐）烘焙进主 `on-command`。
+3. **开机状态链**。配置服务 `sdk_refreshRate=120` + Magisk `service.sh` 开机补写 `sys.pvr.display.type=120.000000`，官方帧率软件显示 120。
+
+**实测证据**：VSYNC 8333333 ns 恒定数小时；`dsi-ctrl-0/1` state_info 的 BYTE_CLK = 165,606,750 / PIXEL_CLK = 220,809,000 Hz（与 827×2225×120 的理论值精确一致，证明时钟真实切换）；`dmesg` 无 underrun/PLL/new_hfp 错误；花屏消失；官方帧率软件 120；游戏部分场景 100+ fps。
+
+**一键刷机包**：[Releases v1.0.0](https://github.com/hhhbwc/pico4_120hz/releases/tag/v1.0.0) — Magisk App 刷入，自动校验固件（仅 5.13.7）与 dtbo 基线、备份原厂 dtbo、写分区并回读校验、装配置映射补丁与开机修正。
+
+> 可复现脚本：`pico4-display-analysis/build_120_base_dtbo.py`（v2/v3）、`build_120_init_dtbo.py`（v6）、`patch_hmdservice_cfgmap.py`（vendor 库补丁），全部带逐字节校验。
 
 ---
 
@@ -238,6 +254,8 @@ SurfaceControl.setAllowedDisplayConfigs(token, new int[] {configIndex, 3});
 
 ### 2.6 120 Hz 基准时序候选（已测试并回滚）
 
+> ⚠️ 2026-09-06 更新：本节的失败分析成立，但「基准时序 120 + DFPS 推导」思路本身最终成功——还差的三块拼图见文首突破章节。
+
 既然 DFPS 只能降频，唯一的出路就是让默认时序本身变成 120 Hz，再让 90 与 72 从它推导出来。这份候选已经实际刷入并重启测试过，结果是黑屏和底部花屏，随后已通过有线 ADB 回滚到原厂 DTBO。`build_120hz_base_dtbo.py` 只做三处原地改动，镜像尺寸不变，全镜像仅 20 字节差异；该脚本用于复现实验，不代表候选可用：
 
 ```
@@ -334,7 +352,9 @@ prop sys.pvr.display.type=120.000000
 
 - 下拉菜单在头显中正常显示，点击后弹窗自动关闭，行文本随选择更新。
 
-### 但 120 Hz 并没有真正生效
+### ~~但 120 Hz 并没有真正生效~~（2026-09-06 已被推翻）
+
+> ⚠️ **本节结论已过时。** 当时 120 只是被登记的假模式，根因是缺配置映射补丁（速率请求没落到 120 配置）与面板初始化序列（NT57900 门极扫描停在 90 档）。补齐后时钟真实切换、实机验证通过——见文首「🎉 2026-09-06 突破」。下文保留作历史记录。
 
 必须说清楚：上面这些都不等于面板在以 120 Hz 扫描。内核里 PICO 自己的日志给出了唯一可信的答案：
 
@@ -570,6 +590,8 @@ pico-refresh-selector/
   app/src/main/java/com/picoxr/refreshselector/RefreshRateHook.java
   app/src/main/assets/xposed_init
   app/src/main/res/values/arrays.xml     作用域仅 com.picovr.settings
+  magisk-module/                         刷机包源文件（module.prop / customize.sh / service.sh）
+  tools/audit_selector.py                APK 与源码不变量离线审计
 docs/
   settings-current.jpg           改造前的实验室页面
 ```
@@ -591,7 +613,10 @@ docs/
 - [x] 提取 LS026B3SA 完整配置（timing/PHY/DSC/TCON），推导 120 Hz 自洽参数
 - [x] 实机验证三个变体 DTBO，全部黑屏花屏
 - [x] 通过 regmap 直读 PLL 寄存器 + kprobe，证实驱动从不调用时钟切换函数
-- [x] **DTBO 结论：120 Hz 在 DTBO 层面不可行，根因是驱动层而非配置层**
+- [x] ~~DTBO 结论：120 Hz 在 DTBO 层面不可行~~（2026-09-06 推翻：当时缺配置映射补丁、配置服务状态链与面板初始化序列，补齐后 v6 实机达成）
+- [x] 逆向 vendor 配置映射硬编码（`[cfg,3]` 常量）与内核 DFPS 模式排序规则，补丁使所有速率请求落到 120 配置
+- [x] 定位底部花屏根因（NT57900 门极扫描停留在 90 档寄存器），v6 把 post-120 序列烘焙进 on-command
+- [x] 发布 Magisk 一键刷机包 v1.0.0，实机验证：面板 120 Hz 稳定、官方软件 120、游戏 100+ fps
 - [x] 绕过内核模块签名强制（`sig_enforce` 数据变量补丁）
 - [x] 构建并加载 dsi120 kprobe 内核模块，注册 `dsi_display_set_mode` 和 `dsi_clk_set_pixel_clk_rate` 探针
 - [ ] 触发 72↔90 Hz 切换，捕获 DSI clock handle
@@ -854,6 +879,8 @@ All three land on positive front porches. The pixel clock becomes 216,541,680 Hz
 
 Safety check: this node's `__local_fixups__` only references the phandle properties `io-channels` and `qcom,panel-supply-entries`, neither of which is touched, so overwriting the PHY timings cannot break the overlay's phandle fixups.
 
+> ⚠️ 2026-09-06 update: this failure analysis stands, but the base-120 approach itself ultimately succeeded once the three missing pieces were added — see the breakthrough section at the top.
+
 **Tested and rolled back.** This candidate was written to the active `dtbo` and tested after reboot; it produced a black screen with a corrupted band at the bottom. It was then rolled back to the stock DTBO through wired ADB. The failure included `DSI_0: LLENGTH = 3400`, indicating a mismatch between DSI transfer length and the LS026B3SA panel configuration.
 
 Have a USB cable available before flashing. Note that although this device reports `ro.boot.flash.locked=0`, **its fastboot has the `flash` command disabled** — fastboot can be entered but cannot write a partition, so the only usable offline path is **EDL (9008)**. Roll back with `dd` while ADB is alive, and `dtbobak` stays untouched throughout as a second safety net. After flashing, judge the real rate with `pico4-display-analysis/verify_refresh_rate.sh` rather than dumpsys.
@@ -923,7 +950,9 @@ prop sys.pvr.display.type=120.000000
 
 - The dropdown renders in the headset, the popup dismisses on selection and the row label follows the choice.
 
-### But 120 Hz is not actually in effect
+### ~~But 120 Hz is not actually in effect~~ (overturned on 2026-09-06)
+
+> ⚠️ **This section is outdated.** The 120 mode was indeed bogus back then — the missing pieces were the vendor config-map patch and the panel-init sequence. With both in place the clock genuinely switches and the result is verified on-device; see the breakthrough section at the top. Kept for history.
 
 None of the above means the panel is scanning at 120 Hz. PICO's own kernel log gives the only trustworthy answer:
 
@@ -1151,6 +1180,8 @@ pico-refresh-selector/
   app/src/main/java/com/picoxr/refreshselector/RefreshRateHook.java
   app/src/main/assets/xposed_init
   app/src/main/res/values/arrays.xml     scope: com.picovr.settings only
+  magisk-module/                         flashable-zip sources (module.prop / customize.sh / service.sh)
+  tools/audit_selector.py                offline source + APK invariant audit
 docs/
   settings-current.jpg           the lab page before modification
 ```
@@ -1172,7 +1203,10 @@ docs/
 - [x] Extract full LS026B3SA configuration (timing/PHY/DSC/TCON), derive self-consistent 120 Hz parameters
 - [x] Flash and test three DTBO variants on-device — all black-screened with a corrupted band
 - [x] Read PLL registers via regmap + kprobe, prove the driver never calls the clock-switch function
-- [x] **DTBO verdict: 120 Hz is infeasible at the DTBO level — the root cause is in the driver layer, not the configuration**
+- [x] ~~DTBO verdict: 120 Hz is infeasible at the DTBO level~~ (overturned 2026-09-06: the config-map patch, boot-time config state and panel-init sequence were missing; v6 achieved it on-device)
+- [x] Reverse the hardcoded vendor config map (`[cfg,3]` constants) and the kernel DFPS mode ordering; patch so every rate request lands on the 120 config
+- [x] Root-cause the bottom garble (NT57900 gate-scan stuck on 90 Hz registers); v6 bakes the post-120 packets into the on-command
+- [x] Ship the Magisk flashable zip v1.0.0; verified on-device: stable 120 Hz, official app 120, 100+ fps in games
 - [x] Bypass kernel module signature enforcement (`sig_enforce` data variable patch)
 - [x] Build and load the dsi120 kprobe kernel module, register probes on `dsi_display_set_mode` and `dsi_clk_set_pixel_clk_rate`
 - [ ] Trigger a 72↔90 Hz switch to capture the DSI clock handle

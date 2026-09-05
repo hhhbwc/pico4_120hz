@@ -1,0 +1,6 @@
+id=pico4_120hz
+name=Pico4 120Hz Display Unlock
+version=v1.0.0
+versionCode=1
+author=hhhbwxc
+description=PICO 4 (Phoenix / SHARP5K) 120 Hz 刷新率解锁：面板 120 初始化 dtbo + vendor 配置映射补丁 + 开机帧率报告修正。仅限 5.13.7 固件。
