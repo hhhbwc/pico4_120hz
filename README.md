@@ -10,11 +10,11 @@
 
 > **当前状态 / Current status / Текущий статус**
 >
-> **DTBO 层面的 120 Hz 已确认不可行**（三个变体均黑屏+花屏，寄存器级证据证实驱动从不调用时钟切换）。但内核模块路径已突破：`sig_enforce` 签名绕过成功，kprobe 模块已加载并注册到 `dsi_display_set_mode` 和 `dsi_clk_set_pixel_clk_rate`，正在进行时钟切换验证。详见 [dsi120 内核模块](pico4-display-analysis/dsi120/README.md) 和[寄存器级失败分析](#52-失败分析)。
+> **DTBO 层面的 120 Hz 已确认不可行**（三个变体均黑屏+花屏，寄存器级证据证实驱动从不调用时钟切换）。但内核模块路径已突破：`sig_enforce` 签名绕过成功，当前 probe-only 模块已加载并注册到 `dsi_display_set_mode`、`dsi_clk_set_pixel_clk_rate` 和 `dsi_clk_set_byte_clk_rate`；时钟调用仍未启用，正在确认 Phoenix BSP 的 handle 生命周期与完整切换序列。详见 [dsi120 内核模块](pico4-display-analysis/dsi120/README.md) 和[寄存器级失败分析](#52-失败分析)。
 >
-> **DTBO-level 120 Hz is confirmed infeasible** (all three variants black-screened; register-level evidence proves the driver never calls the clock-switch function). However, the kernel-module path has broken through: the `sig_enforce` signature bypass works, a kprobe module is loaded and registered on `dsi_display_set_mode` and `dsi_clk_set_pixel_clk_rate`, and clock-switch verification is in progress. See the [dsi120 kernel module](pico4-display-analysis/dsi120/README.md) and [register-level failure analysis](#52-failure-analysis).
+> **DTBO-level 120 Hz is confirmed infeasible** (all three variants black-screened; register-level evidence proves the driver never calls the clock-switch function). However, the kernel-module path has broken through: the `sig_enforce` signature bypass works, and the current probe-only module registers probes on `dsi_display_set_mode`, `dsi_clk_set_pixel_clk_rate`, and `dsi_clk_set_byte_clk_rate`. Clock calls remain disabled while the Phoenix BSP handle lifetime and complete switch sequence are verified. See the [dsi120 kernel module](pico4-display-analysis/dsi120/README.md) and [register-level failure analysis](#52-failure-analysis).
 >
-> **DTBO-уровень 120 Гц подтверждённо недостижим** (все три варианта дали чёрный экран; регистровые доказательства показывают, что драйвер не вызывает функцию переключения часов). Однако путь через модуль ядра прорван: обход подписи `sig_enforce` работает, kprobe-модуль загружен и зарегистрирован на `dsi_display_set_mode` и `dsi_clk_set_pixel_clk_rate`, идёт проверка переключения часов. См. [модуль ядра dsi120](pico4-display-analysis/dsi120/README.md) и [анализ на уровне регистров](#52-анализ-неудачи).
+> **DTBO-уровень 120 Гц подтверждённо недостижим** (все три варианта дали чёрный экран; регистровые доказательства показывают, что драйвер не вызывает функцию переключения часов). Однако путь через модуль ядра прорван: обход подписи `sig_enforce` работает; текущий probe-only модуль зарегистрирован на `dsi_display_set_mode`, `dsi_clk_set_pixel_clk_rate` и `dsi_clk_set_byte_clk_rate`. Вызовы часов пока отключены, пока проверяются lifetime handle и полный порядок переключения в Phoenix BSP. См. [модуль ядра dsi120](pico4-display-analysis/dsi120/README.md) и [анализ на уровне регистров](#52-анализ-неудачи).
 
 ---
 
@@ -460,7 +460,7 @@ echo 1 > /sys/kernel/debug/tracing/events/kprobes/clk_probe/enable
 
 | 路径 | 可行性 | 障碍 |
 | --- | --- | --- |
-| 内核模块 + kprobe 钩住 `dsi_display_set_mode`，手动调用 `dsi_clk_set_pixel_clk_rate` | **已实现** | `sig_enforce` 已通过 `patch_sig_enforce.py` 绕过；dsi120 模块已构建并加载，kprobe 已注册；时钟切换验证进行中 |
+| 内核模块 + kprobe 观察 DSI 模式与时钟 setter | **诊断版已实现** | `sig_enforce` 已绕过；三探针可注册并记录参数；时钟调用保持禁用，等待 Phoenix BSP handle 与切换序列确认 |
 | 静态二进制补丁 boot.img 里的内核，修改 `dsi_display_set_mode` 指令 | 理论可行 | kallsyms 解码已完成；`hexpatch_boot.py` 存在但为分析用脚本，当前优先走内核模块路径 |
 | 改 DTBO | **已证明无效** | 驱动不读这些值，三个变体覆盖 vfp×PHY 两维度结果一致 |
 | 等 PICO 推送支持 120 Hz 的固件更新 | 最省事 | 不可控 |

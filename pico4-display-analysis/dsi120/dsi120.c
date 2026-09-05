@@ -11,13 +11,11 @@
  * a 90 Hz signal while software believes it is at 120 — a black screen
  * with a corrupted band at the bottom.
  *
- * This module hooks dsi_display_set_mode() via kprobe and, when the target
- * rate is 120 Hz, schedules a work item that calls
- * dsi_clk_set_pixel_clk_rate() directly with the correct pclk / byte_clk
- * derived from the panel's 120 Hz geometry.
- *
- * The current build is probe-only (diagnostic): callbacks capture pointers
- * and bump counters, but never schedule work or call clock APIs.
+ * This module hooks dsi_display_set_mode() and the DSI clock setters via
+ * kprobe.  The current build is probe-only (diagnostic): callbacks capture
+ * pointers, arguments, and counters, but never schedule work or call clock
+ * APIs.  The clock worker remains disabled until the private handle lifetime
+ * and complete mode-switch sequence are confirmed on the PICO BSP.
  *
  * Build
  * -----
@@ -256,7 +254,8 @@ static void dsi120_clock_work(struct work_struct *ws)
      * The full _dsi_display_dyn_update_clks() sequence also does a PHY
      * dynamic-refresh handshake; we omit that here because it needs
      * the PHY pointer, which we can't resolve without BSP headers.
-     * Setting the rates alone is enough to move the PLL.
+     * This sequence is intentionally not considered validated: the PICO
+     * BSP may require its full dynamic-refresh and PHY handshake.
      */
 
     if (clk_prep_en && src_clks) {
@@ -276,12 +275,11 @@ static void dsi120_clock_work(struct work_struct *ws)
     LOG("dsi_clk_set_pixel_clk_rate(%llu Hz, idx=0) -> rc=%d\n",
         (unsigned long long)pclk, rc);
 
-    /* byte_intf_clk: use the same value as byte_clk (both are u64).
-     * The actual hardware may need a different ratio; adjust if the
-     * clock framework rejects this. */
-    rc = clk_set_byte(dsi_clk_handle, byte, byte, 0);
+    /* The D-PHY reference path derives byte_intf_clk as byte_clk / 2.
+     * This call remains disabled in the current probe-only build. */
+    rc = clk_set_byte(dsi_clk_handle, byte, byte / 2, 0);
     LOG("dsi_clk_set_byte_clk_rate(%llu Hz, intf=%llu, idx=0) -> rc=%d\n",
-        (unsigned long long)byte, (unsigned long long)byte, rc);
+        (unsigned long long)byte, (unsigned long long)(byte / 2), rc);
 
     if (clk_update_parent && src_clks && mux_clks) {
         rc = clk_update_parent(src_clks, mux_clks);

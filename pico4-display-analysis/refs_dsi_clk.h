@@ -309,6 +309,8 @@ int dsi_clk_set_pixel_clk_rate(void *client, u64 pixel_clk, u32 index);
  * @index:      Index of the DSI controller.
  * return: error code in case of failure or 0 for success.
  */
+/* Older CAF reference branch: three-argument ABI.  The PICO Phoenix
+ * target is documented separately as a four-argument BSP variant. */
 int dsi_clk_set_byte_clk_rate(void *client, u64 byte_clk, u32 index);
 
 /**

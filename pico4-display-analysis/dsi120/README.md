@@ -1,9 +1,9 @@
 # dsi120 — PICO 4 DSI 120 Hz 时钟强制切换内核模块
 
-适用于 SM8250 PICO 4（内核 `4.19.81-perf+`）的可加载内核模块，
-通过 kprobe 钩住 `dsi_display_set_mode()`，在驱动接受 120 Hz 模式后
-手动调用 `dsi_clk_set_pixel_clk_rate()` 把 DSI PLL 从 993 MHz（90 Hz）
-切到正确的 120 Hz 时钟。
+适用于 SM8250 PICO 4（内核 `4.19.81-perf+`）的诊断型可加载内核模块。
+当前版本通过 kprobe 观察 `dsi_display_set_mode()`、
+`dsi_clk_set_pixel_clk_rate()` 和 `dsi_clk_set_byte_clk_rate()`，记录调用次数、
+client 指针及 byte-clock 参数；它不会排队 workqueue，也不会改变任何 DSI 时钟。
 
 ## 背景
 
@@ -81,6 +81,7 @@ adb shell su -Z u:r:magisk:s0 -c 'rmmod dsi120'
 | `armed` | uint | `0` 解除武装但不卸载（默认 `1`） |
 | `setmode_hits` | uint, 只读 | `dsi_display_set_mode` 探针命中次数 |
 | `pixel_hits` | uint, 只读 | `dsi_clk_set_pixel_clk_rate` 探针命中次数 |
+| `byte_hits` | uint, 只读 | `dsi_clk_set_byte_clk_rate` 探针命中次数 |
 
 ## 当前状态：probe-only 诊断版
 
@@ -102,7 +103,7 @@ adb shell su -Z u:r:magisk:s0 -c 'cat /sys/kernel/debug/kprobes/list | grep dsi'
 adb shell 'cat /sys/module/dsi120/initstate'
 
 # 读取命中计数
-adb shell 'cat /sys/module/dsi120/parameters/setmode_hits /sys/module/dsi120/parameters/pixel_hits'
+adb shell 'cat /sys/module/dsi120/parameters/setmode_hits /sys/module/dsi120/parameters/pixel_hits /sys/module/dsi120/parameters/byte_hits'
 
 # 读取内核日志
 adb shell su -Z u:r:magisk:s0 -c 'dmesg | grep dsi120'
@@ -112,12 +113,15 @@ adb shell su -Z u:r:magisk:s0 -c 'dmesg | grep dsi120'
 
 ## 已知限制
 
-- `src_clks`/`mux_clks`/`shadow_clks` 已声明但未赋值，时钟
-  prepare/parent/disable 序列不会执行（仅直接设置 pixel/byte rate）
-- 时钟句柄（`dsi_clk_handle`）通过第二个 kprobe 在合法 72↔90 Hz
-  切换时捕获；如果设备从未切换过刷新率，句柄为空
-- 函数指针 ABI 基于 AAPCS64 约定（`regs->regs[0]` = 第一个参数），
-  未针对 BSP 私有结构布局做完整验证
+- `src_clks`/`mux_clks`/`shadow_clks` 目前未赋值；worker 中的 prepare、
+  parent 和 disable 路径不可达，且 worker 不会被任何 probe 调度
+- `dsi_clk_handle` 只在驱动实际进入 pixel/byte setter 时从 x0 捕获；
+  正常冷启动 90→72 曾观察到 `dsi_display_set_mode`，但未观察到两个
+  setter，因此不能依赖每次模式切换都获得 handle
+- 目标 BSP 的 byte setter 按四个参数观察：`client, byte_clk,
+  byte_intf_clk, index`；D-PHY 参考计算为 `byte_intf_clk = byte_clk / 2`
+- 旧 CAF 参考文件中的三参数声明不代表 PICO Phoenix 运行时 ABI；
+  在没有设备端反汇编或真实命中参数验证前，不恢复时钟调用
 
 ## 文件
 
