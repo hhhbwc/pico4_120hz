@@ -460,7 +460,7 @@ echo 1 > /sys/kernel/debug/tracing/events/kprobes/clk_probe/enable
 
 | 路径 | 可行性 | 障碍 |
 | --- | --- | --- |
-| 内核模块 + kprobe 观察 DSI 模式与时钟 setter | **诊断版已实现** | `sig_enforce` 已绕过；三探针可注册并记录参数；时钟调用保持禁用，等待 Phoenix BSP handle 与切换序列确认 |
+| 内核模块 + kprobe 观察 DSI 模式与时钟 setter | **诊断版已实现** | `sig_enforce` 已绕过；三探针加一个 handle 返回探针可注册并记录参数；时钟调用保持禁用，等待 Phoenix BSP handle 与切换序列确认 |
 | 静态二进制补丁 boot.img 里的内核，修改 `dsi_display_set_mode` 指令 | 理论可行 | kallsyms 解码已完成；`hexpatch_boot.py` 存在但为分析用脚本，当前优先走内核模块路径 |
 | 改 DTBO | **已证明无效** | 驱动不读这些值，三个变体覆盖 vfp×PHY 两维度结果一致 |
 | 等 PICO 推送支持 120 Hz 的固件更新 | 最省事 | 不可控 |

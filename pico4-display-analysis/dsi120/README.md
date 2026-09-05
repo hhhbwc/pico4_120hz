@@ -2,7 +2,8 @@
 
 适用于 SM8250 PICO 4（内核 `4.19.81-perf+`）的诊断型可加载内核模块。
 当前版本通过 kprobe 观察 `dsi_display_set_mode()`、
-`dsi_clk_set_pixel_clk_rate()` 和 `dsi_clk_set_byte_clk_rate()`，记录调用次数、
+`dsi_clk_set_pixel_clk_rate()` 和 `dsi_clk_set_byte_clk_rate()`，并通过
+`dsi_register_clk_handle()` 的 kretprobe 观察 handle 注册返回值，记录调用次数、
 client 指针及 byte-clock 参数；它不会排队 workqueue，也不会改变任何 DSI 时钟。
 
 ## 背景
@@ -38,6 +39,9 @@ make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- HOSTCFLAGS=-fcommon \
 
 # 2. 编译模块
 bash build.sh
+
+# 从 Git Bash 调用 WSL 时，避免继承 Windows 的 PWD；必要时使用显式
+# M=/home/hhhbwc/linux-build/dsi120 路径执行 make。
 
 # 3. 产物
 /home/hhhbwc/linux-build/dsi120/dsi120.ko
@@ -82,16 +86,17 @@ adb shell su -Z u:r:magisk:s0 -c 'rmmod dsi120'
 | `setmode_hits` | uint, 只读 | `dsi_display_set_mode` 探针命中次数 |
 | `pixel_hits` | uint, 只读 | `dsi_clk_set_pixel_clk_rate` 探针命中次数 |
 | `byte_hits` | uint, 只读 | `dsi_clk_set_byte_clk_rate` 探针命中次数 |
+| `register_hits` | uint, 只读 | `dsi_register_clk_handle` 返回探针命中次数 |
 
 ## 当前状态：probe-only 诊断版
 
-当前构建是**纯观察模式**——kprobe 回调只记录指针和计数，
-不排队 workqueue、不调用任何时钟 API。这用于验证探针注册
-和设备稳定性。
+当前构建是**纯观察模式**——kprobe/kretprobe 回调只记录指针、参数和计数，
+不排队 workqueue、不调用任何时钟 API。这用于验证探针注册、
+handle 注册返回值和设备稳定性。
 
-时钟切换逻辑（`dsi120_clock_work()`）存在但不可达。后续版本
-会在确认探针命中和时钟句柄捕获后，受控恢复 workqueue 调度
-和时钟调用。
+时钟切换逻辑（`dsi120_clock_work()`）存在但不可达。即使已经捕获
+handle，也不能据此认为直接调用 setter 已经安全；恢复 workqueue 前还要
+确认 Phoenix BSP 的动态刷新、PHY 握手、clock state 和 handle 生命周期。
 
 ## 验证探针注册
 
@@ -103,7 +108,7 @@ adb shell su -Z u:r:magisk:s0 -c 'cat /sys/kernel/debug/kprobes/list | grep dsi'
 adb shell 'cat /sys/module/dsi120/initstate'
 
 # 读取命中计数
-adb shell 'cat /sys/module/dsi120/parameters/setmode_hits /sys/module/dsi120/parameters/pixel_hits /sys/module/dsi120/parameters/byte_hits'
+adb shell 'cat /sys/module/dsi120/parameters/setmode_hits /sys/module/dsi120/parameters/pixel_hits /sys/module/dsi120/parameters/byte_hits /sys/module/dsi120/parameters/register_hits'
 
 # 读取内核日志
 adb shell su -Z u:r:magisk:s0 -c 'dmesg | grep dsi120'
@@ -115,9 +120,9 @@ adb shell su -Z u:r:magisk:s0 -c 'dmesg | grep dsi120'
 
 - `src_clks`/`mux_clks`/`shadow_clks` 目前未赋值；worker 中的 prepare、
   parent 和 disable 路径不可达，且 worker 不会被任何 probe 调度
-- `dsi_clk_handle` 只在驱动实际进入 pixel/byte setter 时从 x0 捕获；
-  正常冷启动 90→72 曾观察到 `dsi_display_set_mode`，但未观察到两个
-  setter，因此不能依赖每次模式切换都获得 handle
+- `dsi_clk_handle` 优先从 `dsi_register_clk_handle()` 的返回值捕获，
+  同时保留从 pixel/byte setter 的 x0 捕获作为 fallback；如果模块加载晚于
+  display 初始化且之后没有新的注册或 setter 调用，handle 仍可能为空
 - 目标 BSP 的 byte setter 按四个参数观察：`client, byte_clk,
   byte_intf_clk, index`；D-PHY 参考计算为 `byte_intf_clk = byte_clk / 2`
 - 旧 CAF 参考文件中的三参数声明不代表 PICO Phoenix 运行时 ABI；
