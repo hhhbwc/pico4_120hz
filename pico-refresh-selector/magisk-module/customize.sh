@@ -1,5 +1,6 @@
 #!/system/bin/sh
 # Pico4 120Hz Display Unlock - installer
+SKIPUNZIP=1
 SKIPMOUNT=false
 PROPFILE=false
 POSTFSDATA=false
@@ -35,6 +36,14 @@ if [ ! -b "$DTBO_PART" ]; then
     abort "dtbo partition not found"
 fi
 
+# Extract module files manually: Magisk's built-in extractor skips zip
+# entries without Unix permission bits.
+unzip -o "$ZIPFILE" "module.prop" "service.sh" "system/*" -d "$MODPATH" >/dev/null 2>&1     || abort "Failed to extract module files"
+set_perm_recursive "$MODPATH" 0 0 0755 0644
+set_perm "$MODPATH/service.sh" 0 0 0755
+[ -f "$MODPATH/system/lib64/libpxrhmdservice.so" ] || abort "libpxrhmdservice.so missing after extraction"
+[ -f "$MODPATH/service.sh" ] || abort "service.sh missing after extraction"
+
 current_dtbo=$(sha256_file "$DTBO_PART") || abort "Unable to hash dtbo partition"
 
 case "$current_dtbo" in
@@ -59,7 +68,6 @@ esac
 
 if [ "$NEED_FLASH" = "1" ]; then
     ui_print "- Extracting 120Hz dtbo image"
-    rm -rf "$TMPDIR/dtbo.img"
     unzip -o "$ZIPFILE" "dtbo.img" -d "$TMPDIR" >/dev/null 2>&1 || abort "Failed to extract dtbo.img"
     dtbo_img=$(sha256_file "$TMPDIR/dtbo.img")
     [ "$dtbo_img" = "$V6_DTBO_SHA256" ] || abort "Bundled dtbo.img is corrupt"

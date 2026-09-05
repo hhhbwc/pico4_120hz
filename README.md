@@ -30,6 +30,8 @@
 
 **一键刷机包**：[Releases v1.0.0](https://github.com/hhhbwc/pico4_120hz/releases/tag/v1.0.0) — Magisk App 刷入，自动校验固件（仅 5.13.7）与 dtbo 基线、备份原厂 dtbo、写分区并回读校验、装配置映射补丁与开机修正。
 
+> ✅ **刷机包已通过 Magisk CLI 全流程实测**：原厂检测→备份→刷写→回读校验→模块暂存→重启落位→bind-mount 生效→`service.sh` 修正帧率报告。过程中修复三个打包 bug（zip 权限位缺失、脚本 CRLF 行尾、busybox unzip 通配符静默忽略）。可复现打包脚本：`pico-refresh-selector/magisk-module/build_zip.py`。
+
 > 可复现脚本：`pico4-display-analysis/build_120_base_dtbo.py`（v2/v3）、`build_120_init_dtbo.py`（v6）、`patch_hmdservice_cfgmap.py`（vendor 库补丁），全部带逐字节校验。
 
 ---
@@ -612,9 +614,9 @@ docs/
 - [x] 发布 Magisk 一键刷机包 v1.0.0，实机验证：面板 120 Hz 稳定、官方软件 120、游戏 100+ fps
 - [x] 绕过内核模块签名强制（`sig_enforce` 数据变量补丁）
 - [x] 构建并加载 dsi120 kprobe 内核模块，注册 `dsi_display_set_mode` 和 `dsi_clk_set_pixel_clk_rate` 探针
-- [ ] 触发 72↔90 Hz 切换，捕获 DSI clock handle
+- [x] ~~触发 72↔90 Hz 切换，捕获 DSI clock handle~~（被 v6 DTBO 方案取代，无需内核模块）
 - [ ] 在 workqueue 中调用 `dsi_clk_set_pixel_clk_rate()`，验证 120 Hz 时钟切换
-- [ ] 在原始 DTBO 上完成 72↔90 运行时即时切换的稳定性验证
+- [x] ~~在原始 DTBO 上完成 72↔90 运行时即时切换的稳定性验证~~（被 v6 取代：面板锁定 120 Hz，不再需要 72↔90 切换）
 - [ ] 扩展到 `system_server` 修正 `DisplayModeDirector`，做到开机自动生效
 - [x] 提供 Magisk 模块形式的一键安装（Releases v1.0.0）
 
@@ -1191,7 +1193,7 @@ docs/
 - [x] Build and load the dsi120 kprobe kernel module, register probes on `dsi_display_set_mode` and `dsi_clk_set_pixel_clk_rate`
 - [x] ~~Trigger a 72↔90 Hz switch to capture the DSI clock handle~~ (superseded by the v6 DTBO solution)
 - [ ] Call `dsi_clk_set_pixel_clk_rate()` from the workqueue and verify the 120 Hz clock switch
-- [ ] Verify stable live 72<->90 switching on the stock DTBO
+- [x] ~~Verify stable live 72<->90 switching on the stock DTBO~~ (superseded by v6: the panel is locked to 120 Hz)
 - [ ] Extend into `system_server` to fix `DisplayModeDirector` and apply the rate at boot
 - [x] Ship a Magisk module for one-step installation (Releases v1.0.0)
 
