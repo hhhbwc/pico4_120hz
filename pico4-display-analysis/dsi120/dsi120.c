@@ -53,6 +53,7 @@
 #include <linux/spinlock.h>
 #include <linux/ratelimit.h>
 #include <linux/uaccess.h>
+#include <linux/err.h>
 #include <linux/clk.h>
 
 /* ------------------------------------------------------------------ */
@@ -142,12 +143,15 @@ static DECLARE_WORK(clock_work, dsi120_clock_work);
 static unsigned int setmode_hits;
 static unsigned int pixel_hits;
 static unsigned int byte_hits;
+static unsigned int register_hits;
 module_param(setmode_hits, uint, 0444);
 MODULE_PARM_DESC(setmode_hits, "Approximate dsi_display_set_mode probe hit count");
 module_param(pixel_hits, uint, 0444);
 MODULE_PARM_DESC(pixel_hits, "Approximate dsi_clk_set_pixel_clk_rate probe hit count");
 module_param(byte_hits, uint, 0444);
 MODULE_PARM_DESC(byte_hits, "Approximate dsi_clk_set_byte_clk_rate probe hit count");
+module_param(register_hits, uint, 0444);
+MODULE_PARM_DESC(register_hits, "Approximate dsi_register_clk_handle return hit count");
 
 /* Guard so we don't switch clocks more often than every second, and
  * we don't re-enter the switch while one is in flight.
@@ -320,6 +324,46 @@ out:
 
 static struct kprobe kp_setpixel;
 static struct kprobe kp_setbyte;
+static struct kretprobe kp_register;
+
+static int __kprobes handler_register_ret(struct kretprobe_instance *ri,
+                                           struct pt_regs *regs)
+{
+    /* AAPCS64 returns the handle (or ERR_PTR) in x0. */
+    void *handle = (void *)regs->regs[0];
+
+    WRITE_ONCE(register_hits, READ_ONCE(register_hits) + 1);
+    if (!handle || IS_ERR(handle)) {
+        VLOG("dsi_register_clk_handle returned %p\n", handle);
+        return 0;
+    }
+
+    if (!READ_ONCE(dsi_clk_handle))
+        WRITE_ONCE(dsi_clk_handle, handle);
+    LOG("captured dsi_clk_client_info handle=%p from dsi_register_clk_handle\n",
+        handle);
+    return 0;
+}
+
+static int register_handle_probe(void)
+{
+    kp_register.kp.symbol_name = "dsi_register_clk_handle";
+    kp_register.handler = handler_register_ret;
+    kp_register.maxactive = 8;
+
+    int rc = register_kretprobe(&kp_register);
+    if (rc) {
+        LOG("register_kretprobe(dsi_register_clk_handle) failed rc=%d\n", rc);
+        return rc;
+    }
+    LOG("registered kretprobe on dsi_register_clk_handle\n");
+    return 0;
+}
+
+static void unregister_handle_probe(void)
+{
+    unregister_kretprobe(&kp_register);
+}
 
 static int __kprobes handler_pixel_pre(struct kprobe *p, struct pt_regs *regs)
 {
@@ -452,8 +496,16 @@ static int __init dsi120_init(void)
     /* Secondary kprobe: hook dsi_clk_set_pixel_clk_rate to capture the
      * clock handle on the first legitimate 72<->90 switch.
      */
+    rc = register_handle_probe();
+    if (rc) {
+        unregister_kprobe(&kp_setmode);
+        destroy_workqueue(dsi120_wq);
+        return rc;
+    }
+
     rc = register_pixel_probe();
     if (rc) {
+        unregister_handle_probe();
         unregister_kprobe(&kp_setmode);
         destroy_workqueue(dsi120_wq);
         return rc;
@@ -462,6 +514,7 @@ static int __init dsi120_init(void)
     rc = register_byte_probe();
     if (rc) {
         unregister_pixel_probe();
+        unregister_handle_probe();
         unregister_kprobe(&kp_setmode);
         destroy_workqueue(dsi120_wq);
         return rc;
@@ -474,6 +527,7 @@ static int __init dsi120_init(void)
 static void __exit dsi120_exit(void)
 {
     unregister_kprobe(&kp_setmode);
+    unregister_handle_probe();
     unregister_pixel_probe();
     unregister_byte_probe();
     cancel_work_sync(&clock_work);
