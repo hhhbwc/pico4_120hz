@@ -10,11 +10,11 @@
 
 > **当前状态 / Current status / Текущий статус**
 >
-> **✅ 2026-09-06：锁定 120 Hz 方案已验证可用（Release v1.0.0）；⚠️ 实时多档切换存在黑屏 bug，待修。** 刷入 v6 DTBO + 配置映射补丁后，面板稳定运行 120 Hz（VSYNC 8333333 ns、时钟精确切换、内核零错误、游戏实测 100+ fps），刷机包已通过 Magisk 全流程实测。但 **运行中的实时 DFPS 切换（下拉菜单选 72/90）会黑屏**：开机时的同类切换成功（v7 真实映射下开机即 72 Hz ✓），运行中切换却失败，确切机制待查（无 SF 崩溃、无 tombstone，疑似 DFPS 异步更新路径或 NT57900 寄存器失配）。设备目前已恢复原厂。待办：修实时切换，或改为“选择后重启生效”的 stock 式 UX。
+> **✅ 2026-09-06：锁定 120 Hz 方案已验证可用（Release v1.0.0）；⚠️ 实时多档切换存在黑屏 bug，待修。** 刷入 v6 DTBO + 配置映射补丁后，面板稳定运行 120 Hz（VSYNC 8333333 ns、时钟精确切换、内核零错误、游戏实测 100+ fps），刷机包已通过 Magisk 全流程实测。但 **任何离开 120 的实时 DFPS 切换都会黑屏**（二次确认：含开机自动切换；vfp 缩小方向可行、vfp 增大方向必黑，见已知问题）。唯一稳定架构 = 锁定 120（即 Release 方案）。设备当前已恢复原厂。
 >
-> **✅ 2026-09-06: locked-120 Hz verified usable (Release v1.0.0); ⚠️ live multi-rate switching has a black-screen bug, unfixed.** With the v6 DTBO + config-map patch the panel runs a stable 120 Hz (VSYNC 8333333 ns, exact clock switch, zero kernel errors, a real game at 100+ fps), and the flashable zip passed a full Magisk end-to-end install test. But **live DFPS switching (picking 72/90 in the dropdown while running) black-screens the panel**: the same switch works at boot (the v7 true mapping boots into 72 Hz ✓) yet fails mid-run; the exact mechanism is under investigation (no SF crash, no tombstone; suspected DFPS async-update path or NT57900 register mismatch). The device has been restored to stock. TODO: fix live switching, or switch to a "pick + reboot" stock-style UX.
+> **✅ 2026-09-06: locked-120 Hz verified usable (Release v1.0.0); ⚠️ live multi-rate switching has a black-screen bug, unfixed.** With the v6 DTBO + config-map patch the panel runs a stable 120 Hz (VSYNC 8333333 ns, exact clock switch, zero kernel errors, a real game at 100+ fps), and the flashable zip passed a full Magisk end-to-end install test. But **any live DFPS switch away from 120 black-screens the panel** (re-confirmed: including the automatic boot-time switch; vfp-shrink direction works, vfp-grow direction always fails — see known issues). The only stable architecture = locked 120 (the Release design). The device has been restored to stock.
 >
-> **✅ 06.09.2026: заблокированные 120 Гц подтверждены (Release v1.0.0); ⚠️ живое переключение частот даёт чёрный экран, не исправлено.** С DTBO v6 + патчем карты конфигурации панель стабильно работает на 120 Гц, установщик прошёл полный тест. Но **живое переключение DFPS (выбор 72/90 в меню во время работы) даёт чёрный экран**: та же переключение при загрузке работает (v7: загрузка сразу на 72 Гц ✓), а в процессе работы нет; механизм выясняется. Устройство восстановлено до заводского состояния.
+> **✅ 06.09.2026: заблокированные 120 Гц подтверждены (Release v1.0.0); ⚠️ живое переключение частот даёт чёрный экран, не исправлено.** С DTBO v6 + патчем карты конфигурации панель стабильно работает на 120 Гц, установщик прошёл полный тест. Но **любое живое переключение DFPS от 120 Гц даёт чёрный экран** (подтверждено дважды: включая автоматическое при загрузке; направление с уменьшением vfp работает, с увеличением — всегда отказ — см. известные проблемы). Единственная стабильная архитектура = блокировка на 120 Гц (дизайн из Release). Устройство восстановлено до заводского состояния.
 
 ---
 
@@ -36,7 +36,7 @@
 
 ### 已知问题：120 Hz 下的两个待修项（2026-09-06 收尾时确认）
 
-**问题 1：运行中实时 DFPS 切换黑屏**（见上文 v7 实验）。
+**问题 1：任何离开 120 的实时 DFPS 切换都黑屏（含开机自动切换）**。规律（2026-09-06 二次确认）：vfp 缩小方向（90→120，vfp 798→57）成功；vfp 增大方向（120→72/90，vfp 57→798/1540）必黑。VSYNC 照常、SF 不崩、无 tombstone，但面板不出图——DFPS 异步更新对 vfp 增大的切换无效（与 5.2 节寄存器级分析一致：新时序从未真正写入硬件）。**唯一稳定架构 = 锁定 120**（Release v1.0.0 的方案）；真实三档切换需先在驱动层解决（内核模块/补丁路线，见 dsi120）。
 
 **问题 2：窗口叠加场景出现细线条伪影，仅 120 Hz 出现（A/B 已确认）**。同场景 90 Hz 原厂干净，全屏内容（桌面/游戏）120 Hz 连续数小时无伪影——排除面板初始化问题，定位为 120 Hz 帧预算（8.3 ms/帧）与合成/带宽余量问题：多层窗口叠加是合成负载最重的场景，GPU 合成超时或 DSI/DDR 取数不足时扫描到未完成的缓冲。超频 CPU 无济于事（不是算力问题）。下次复现时的取证清单：
 
