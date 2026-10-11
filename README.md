@@ -34,6 +34,8 @@
 
 > 可复现脚本：`pico4-display-analysis/build_120_base_dtbo.py`（v2/v3）、`build_120_init_dtbo.py`（v6）、`patch_hmdservice_cfgmap.py`（vendor 库补丁），全部带逐字节校验。
 
+> **🆕 v1.0.1（2026-10-11）**：三项更新。① **固件门放宽**：从整串指纹匹配改为按组件校验（设备 `PICOA8110` + 版本 `5.13.7*` + 面板 `SHARP5K`），并新增原版 `libpxrhmdservice.so` 的 SHA-256 白名单——修复 Issue #2（`Phoenix_ovs` 变体与其他 `smartcm.*` 增量此前被整串匹配误拒）；白名单同时保证补丁库只会覆盖逐字节一致的底库，变体固件库有差异时安全中止。② **修复"刷入后黑屏/花屏，电源键熄屏再亮即恢复"**（见下方问题 3）：`service.sh` 现在在写入 120 配置后自动补一次熄屏/亮屏，重跑面板 init。③ **打包链路可复现**：补丁库与 META-INF 已入库，`patch_hmdservice_cfgmap.py` 默认产出厂映射（`--v7` 仅供诊断，请勿刷入），`build_zip.py` 对 dtbo/lib 逐哈希校验。
+
 ### 已知问题：120 Hz 下的两个待修项（2026-09-06 收尾时确认）
 
 **问题 1：任何离开 120 的实时 DFPS 切换都黑屏（含开机自动切换）**。规律（2026-09-06 二次确认）：vfp 缩小方向（90→120，vfp 798→57）成功；vfp 增大方向（120→72/90，vfp 57→798/1540）必黑。VSYNC 照常、SF 不崩、无 tombstone，但面板不出图——DFPS 异步更新对 vfp 增大的切换无效（与 5.2 节寄存器级分析一致：新时序从未真正写入硬件）。**唯一稳定架构 = 锁定 120**（Release v1.0.0 的方案）；真实三档切换需先在驱动层解决（内核模块/补丁路线，见 dsi120）。
@@ -45,6 +47,8 @@
 3. GPU busy 与合成器丢帧统计
 
 候选修法：DDR/总线锁高频；重叠窗口场景自动回落 90 Hz；或接受为已知限制（游戏单 surface + timewarp 不受影响）。
+
+**问题 3（v1.0.1 已自动修复）：刷入后开机画面黑屏 + 水平分界线/下方花屏，电源键熄屏再亮即恢复**。机理：v6 把 120 档门极扫描烘焙进面板 on-command，而面板可能在 SurfaceFlinger 稳定到 120 配置之前上电——门极扫描与主机时序失配期间出现分界线伪影（与 2.6 节早期失败同源）。熄屏→亮屏会让面板下电/上电、重跑完整 init 序列，此时主机已锁 120，时序对齐，画面恢复。v1.0.1 起 `service.sh` 在每次开机写入 120 配置后自动补一次该操作（创建 `/sdcard/Download/.pico4_120hz_noscreenfix` 可关闭）；v1.0.0 用户遇到时手动按一次电源键即可。注意：若熄屏再亮仍不恢复且 `entered rate` 停在 90/72，属于安装未完成（dtbo 未刷上或固件门拦截），请带着 dtbo 分区哈希开 issue。
 
 ---
 
@@ -504,7 +508,21 @@ cd pico-refresh-selector
 
 环境：`compileSdk 35`、`minSdk 29`、`targetSdk 29`，依赖 `compileOnly de.robv.android.xposed:api:82`。
 
+Magisk 刷机包（v1.0.1 起）：
+
+```bash
+cd pico-refresh-selector/magisk-module
+python build_zip.py --dtbo ../pico4-display-analysis/dtbo-120hz-v6-init120.img
+# 产物: pico4-display-analysis/pico4-120hz-v1.0.1.zip
+```
+
+补丁库 `libpxrhmdservice.patched.so` 与 META-INF 已入库；dtbo 镜像（25MB）不入库，从 Release zip 解出或用 `patch_hmdservice_cfgmap.py` 从设备原版库重生成后 `build_zip.py --dtbo` 传入——两个产物都会先做 SHA-256 校验再打包。`python tools/audit_selector.py` 可审计源码不变量与模块脚本。
+
 ## 7. 安装
+
+**刷机包路径（推荐，需 root + Magisk）**：Magisk App → 模块 → 从本地安装 `pico4-120hz-v1.0.1.zip`。安装器会按组件校验固件（设备 `PICOA8110`、版本 `5.13.7*`、面板 `SHARP5K`）、校验原版 `libpxrhmdservice.so` 哈希与 dtbo 基线（v1.0.0 的整串指纹匹配已废弃，见 Issue #2）、备份原厂 dtbo 到 `/sdcard/Download/`、写分区并回读校验。重启后面板锁 120 Hz；开机约半分钟后会自动熄屏/亮屏一次做面板时序重同步（首刷前几分钟如有分界线/花屏属预期，见已知问题 3）。
+
+**Xposed 模块路径（可选，桌面下拉菜单）**：
 
 ```bash
 adb install -r app/build/outputs/apk/debug/app-debug.apk
@@ -961,6 +979,8 @@ PxrCompositor: setRefreshRate:120.000000, current rate: 120.000000
 
 ## 5. Known limitations
 
+> 🆕 **v1.0.1 (2026-10-11)**: ① the firmware gate is now component-wise (device `PICOA8110`, version `5.13.7*`, panel `SHARP5K`) plus a stock-`libpxrhmdservice.so` SHA-256 whitelist, fixing issue #2 (`Phoenix_ovs` variants and other `smartcm.*` incrementals were rejected by the v1.0.0 whole-fingerprint match). ② the "black screen / corrupted rows after flashing, cleared by a power-button screen off/on" artifact (shared intro, problem 3) is now fixed automatically: after writing the 120 config, `service.sh` cycles the screen once per boot so the panel re-runs its init with the host locked at 120 (opt-out file `/sdcard/Download/.pico4_120hz_noscreenfix`). ③ the packaging chain is reproducible from the repo: the patched vendor lib and META-INF are committed, `patch_hmdservice_cfgmap.py` defaults to the shipped mapping (`--v7` is diagnostics-only, do not flash), and `build_zip.py` hash-verifies the dtbo and lib before packing.
+
 > ⚠️ 2026-09-06 update: this describes the pre-v6 historical state. **The device currently runs the v6 image and holds a stable 120 Hz** (see the breakthrough section at the top); the rest of the analysis still explains why the early candidates failed.
 
 **All candidate DTBOs have been rolled back; the stock DTBO is active.** The stock DTBO lists `<90 72>` with `max-refresh-rate = 90`, and both are genuine valid timings. Every 120 Hz candidate was rolled back through wired ADB; further blind partition writes are not recommended.
@@ -1082,6 +1102,10 @@ cd pico-refresh-selector
 Toolchain: `compileSdk 35`, `minSdk 29`, `targetSdk 29`, `compileOnly de.robv.android.xposed:api:82`.
 
 ## 7. Install
+
+**Flashable-zip path (recommended, needs root + Magisk)**: Magisk App → Modules → Install from storage → `pico4-120hz-v1.0.1.zip`. The installer verifies the firmware component-wise (device `PICOA8110`, version `5.13.7*`, panel `SHARP5K`), checks the stock `libpxrhmdservice.so` hash and the dtbo baseline (the v1.0.0 whole-fingerprint match is retired, see issue #2), backs up the stock dtbo to `/sdcard/Download/`, then writes and re-reads the partition. After reboot the panel is locked at 120 Hz; about half a minute into each boot the module cycles the screen once to resync the panel timing (a split/corrupt frame in the first minutes after flashing is expected and clears itself — known issue 3).
+
+**Xposed module path (optional, native dropdown in Settings)**:
 
 ```bash
 adb install -r app/build/outputs/apk/debug/app-debug.apk
@@ -1534,6 +1558,8 @@ PxrCompositor: setRefreshRate:120.000000, current rate: 120.000000
 
 ## 5. Известные ограничения
 
+> 🆕 **v1.0.1 (11.10.2026)**: ① проверка прошивки теперь покомпонентная (устройство `PICOA8110`, версия `5.13.7*`, панель `SHARP5K`) плюс белый список SHA-256 стоковой `libpxrhmdservice.so` — исправляет issue #2 (варианты `Phoenix_ovs` и другие инкременты `smartcm.*` отвергались целой строкой fingerprint в v1.0.0). ② артефакт «чёрный экран / полосы после прошивки, лечится выключением-включением экрана кнопкой питания» (проблема 3 во вводном разделе) теперь устраняется автоматически: после записи конфигурации 120 `service.sh` один раз за загрузку гасит и включает экран, чтобы панель повторила init при хосте, уже заблокированном на 120 (файл отключения `/sdcard/Download/.pico4_120hz_noscreenfix`). ③ сборка воспроизводима из репозитория: пропатченная vendor-библиотека и META-INF добавлены в git, `patch_hmdservice_cfgmap.py` по умолчанию даёт поставляемое отображение (`--v7` только для диагностики, не прошивать), `build_zip.py` проверяет хэши dtbo и библиотеки перед упаковкой.
+
 > ⚠️ Обновление 06.09.2026: здесь описано историческое состояние до v6. **На устройстве сейчас прошит образ v6 и стабильно работают 120 Гц** (см. раздел о прорыве в начале); остальной анализ по-прежнему объясняет, почему ранние кандидаты не сработали.
 
 **Все кандидаты DTBO откатаны; активен исходный DTBO.** В исходном DTBO список `<90 72>`, `max-refresh-rate = 90`, и оба режима являются настоящими корректными таймингами. Все кандидаты 120 Гц были откатаны через проводной ADB; дальнейшая слепая запись в раздел не рекомендуется.
@@ -1640,6 +1666,10 @@ cd pico-refresh-selector
 Окружение: `compileSdk 35`, `minSdk 29`, `targetSdk 29`, `compileOnly de.robv.android.xposed:api:82`.
 
 ## 7. Установка
+
+**Путь через прошиваемый zip (рекомендуется, нужны root + Magisk)**: Magisk App → Модули → Установить из хранилища → `pico4-120hz-v1.0.1.zip`. Установщик покомпонентно проверяет прошивку (устройство `PICOA8110`, версия `5.13.7*`, панель `SHARP5K`), сверяет хэш стоковой `libpxrhmdservice.so` и базу dtbo (целострокая проверка fingerprint из v1.0.0 упразднена, см. issue #2), бэкапит стоковый dtbo в `/sdcard/Download/`, затем пишет раздел и перечитывает его. После перезагрузки панель заблокирована на 120 Гц; примерно через полминуты после каждой загрузки модуль один раз гасит и включает экран для ресинхронизации таймингов панели (разделённая/искажённая картинка в первые минуты после прошивки ожидаема и уходит сама — известная проблема 3).
+
+**Путь через Xposed-модуль (опционально, нативный выпадающий список в настройках)**:
 
 ```bash
 adb install -r app/build/outputs/apk/debug/app-debug.apk

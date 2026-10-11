@@ -26,4 +26,20 @@
     setprop persist.pvr.display.type jdi493120
     setprop sys.pvr.display.type 120.000000
     log -t pico4_120hz "applied: config=$ok persist=jdi493120 sys=120.000000"
+
+    # Panel/host timing resync. The v6 panel-init bakes the 120 Hz gate-scan
+    # into the panel on-command, but the panel can power on before
+    # SurfaceFlinger has settled on the 120 config; while the panel sequence
+    # has not re-run, the gate scan and host timing disagree and the picture
+    # shows a horizontal split with corrupted rows below it. A screen off/on
+    # cycle re-runs the panel init with the host now locked at 120 (verified
+    # by hand with the power button). Touched every boot; create
+    # /sdcard/Download/.pico4_120hz_noscreenfix to skip.
+    if [ ! -f /sdcard/Download/.pico4_120hz_noscreenfix ]; then
+        sleep 8
+        input keyevent KEYCODE_POWER
+        sleep 3
+        input keyevent KEYCODE_POWER
+        log -t pico4_120hz "panel resync: screen cycled off/on"
+    fi
 ) &

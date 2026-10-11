@@ -1,0 +1,56 @@
+#!/sbin/sh
+# Magisk Module Installer (update-binary)
+# This is the standard Magisk module installer script.
+# For Magisk 20+, this is typically symlinked to the Magisk binary.
+# We provide a standalone shell-script version for compatibility.
+
+#################
+# Initialization
+#################
+
+umask 022
+
+# Custom recovery / Magisk Manager environment
+if [ -z "$OUTFD" ]; then
+  OUTFD=$(ps | grep -v 'grep' | grep -oE 'update(.*)' | cut -d" " -f3)
+fi
+
+ui_print() {
+  if [ -n "$OUTFD" ]; then
+    echo "ui_print $1" > /proc/self/fd/$OUTFD
+    echo "ui_print" > /proc/self/fd/$OUTFD
+  else
+    echo "$1"
+  fi
+}
+
+# Find where we are
+ZIPFILE="$3"
+if [ -z "$ZIPFILE" ]; then
+  ZIPFILE="$2"
+fi
+
+# Extract module files
+ui_print "Extracting module files..."
+mkdir -p "$MODPATH" 2>/dev/null
+cd "$MODPATH"
+
+# Determine extraction method
+if command -v unzip >/dev/null 2>&1; then
+  unzip -o "$ZIPFILE" -x "META-INF/*" >/dev/null 2>&1
+elif command -v busybox >/dev/null 2>&1; then
+  busybox unzip -o "$ZIPFILE" -x "META-INF/*" >/dev/null 2>&1
+else
+  ui_print "ERROR: No unzip available"
+  exit 1
+fi
+
+# Run customize.sh if exists
+if [ -f "$MODPATH/customize.sh" ]; then
+  chmod 755 "$MODPATH/customize.sh" "$MODPATH/action.sh" "$MODPATH/post-fs-data.sh" "$MODPATH/switch.sh" "$MODPATH/system/bin/matrix-download"
+  chmod 644 "$MODPATH/system/etc/pico4-matrix/cacert.pem"
+  . "$MODPATH/customize.sh"
+fi
+
+ui_print "Installation complete!"
+exit 0

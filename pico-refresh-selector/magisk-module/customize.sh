@@ -7,20 +7,31 @@ POSTFSDATA=false
 LATESTARTSERVICE=true
 
 ui_print "======================================"
-ui_print "  Pico4 120Hz Display Unlock v1.0.0"
+ui_print "  Pico4 120Hz Display Unlock v1.0.1"
 ui_print "======================================"
 
-EXPECTED_FINGERPRINT="Pico/Phoenix/PICOA8110:10/5.13.7/smartcm.1761755159:user/dev-keys"
-STOCK_DTBO_SHA256="307e702182e731b76e8bc0a4aec131a53e1ddf82e96f2f416e2f49129e6d46ac"
-V6_DTBO_SHA256="f0c10d1dd04dd9a7c46b319758dbdd5f7540fe06aaf807377d23392c71aa20ea"
-DTBO_PART="/dev/block/by-name/dtbo"
-
-if [ "$(getprop ro.build.fingerprint)" != "$EXPECTED_FINGERPRINT" ]; then
-    abort "Unsupported firmware: $(getprop ro.build.fingerprint)"
+# Firmware gate, component-wise. 5.13.7 ships under several device-tree
+# variants (Phoenix, Phoenix_ovs) and build incrementals (smartcm.*); the
+# v1.0.0 whole-fingerprint match rejected all of those (issue #2). The real
+# safety net for the vendor-lib overlay is the stock-lib hash whitelist below.
+if [ "$(getprop ro.product.device)" != "PICOA8110" ]; then
+    abort "Unsupported device: $(getprop ro.product.device)"
 fi
+case "$(getprop ro.build.version.incremental)" in
+    5.13.7*) ;;
+    *) abort "Unsupported firmware: $(getprop ro.build.version.incremental) (need 5.13.7)" ;;
+esac
 if [ "$(getprop ro.pvr.hmd.type)" != "SHARP5K" ]; then
     abort "Unsupported panel: $(getprop ro.pvr.hmd.type)"
 fi
+
+# The overlay lib was patched from the 5.13.7 stock lib. Refuse to bind-mount
+# it over anything else, or hmdservice may crash at boot.
+BASE_LIB_SHA256="c290a9f51214ff37b415c309c5facf80542024d40c22e5ae3cdeff9825a31fef"
+BASE_LIB="/system/lib64/libpxrhmdservice.so"
+STOCK_DTBO_SHA256="307e702182e731b76e8bc0a4aec131a53e1ddf82e96f2f416e2f49129e6d46ac"
+V6_DTBO_SHA256="f0c10d1dd04dd9a7c46b319758dbdd5f7540fe06aaf807377d23392c71aa20ea"
+DTBO_PART="/dev/block/by-name/dtbo"
 
 sha256_file() {
     local output digest
@@ -34,6 +45,11 @@ sha256_file() {
 
 if [ ! -b "$DTBO_PART" ]; then
     abort "dtbo partition not found"
+fi
+
+base_lib_hash=$(sha256_file "$BASE_LIB") || abort "Cannot hash $BASE_LIB"
+if [ "$base_lib_hash" != "$BASE_LIB_SHA256" ]; then
+    abort "Stock libpxrhmdservice.so mismatch: $base_lib_hash (post this hash to github.com/hhhbwc/pico4_120hz issue #2)"
 fi
 
 # Extract module files manually: Magisk's built-in extractor skips zip
@@ -62,7 +78,7 @@ case "$current_dtbo" in
         NEED_FLASH=0
         ;;
     *)
-        abort "Unknown dtbo baseline: $current_dtbo (wrong firmware or already modified)"
+        abort "Unknown dtbo baseline: $current_dtbo (wrong firmware or already modified; post this hash to issue #2)"
         ;;
 esac
 
@@ -80,9 +96,11 @@ if [ "$NEED_FLASH" = "1" ]; then
 fi
 
 ui_print "- Installing vendor config-map patch"
-ui_print "- Installing boot-time rate fix"
+ui_print "- Installing boot-time rate fix + panel resync"
 ui_print "======================================"
 ui_print " Reboot to apply. Panel runs 120Hz."
+ui_print " First minutes may show a split/corrupt"
+ui_print " frame until the auto screen-cycle runs."
 ui_print " Restore stock: flash your dtbo"
 ui_print " backup + disable this module."
 ui_print "======================================"
