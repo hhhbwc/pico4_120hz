@@ -35,30 +35,26 @@ VD 的 PMS 修复、转区、dock 恢复和汉化都只是设备环境背景，�
 
 ## 3. Git 与发布状态
 
-整理前已确认：
+2026-10-19 更新（工作树已清空，全部改动已进提交）：
 
 ```text
 分支：main
-HEAD：ca45115
+HEAD：1cdb06f
 origin/main：d5e3d48
-状态：本地领先远端 1 个提交
+状态：本地领先远端 2 个提交，未推送
 ```
 
-当前已有的未提交修改（不是本次整理产生的）：
-
-```text
-README.md
-pico-refresh-selector/magisk-module/customize.sh
-pico-refresh-selector/magisk-module/service.sh
-pico-refresh-selector/tools/audit_selector.py
-```
+`ca45115` 的固件门判据错误（用 `ro.build.version.incremental` 匹配 `5.13.7*`，
+而该属性在所有 5.13.7 设备上都是 `smartcm.<时间戳>`，导致 100% abort），
+已由 `1cdb06f` 改为检查 `ro.build.id` 并保留 incremental 兜底。
+`1cdb06f` 同时合并了 a55uka 的 Phoenix_ovs（global）支持。
 
 ### 版本矩阵
 
 | 版本 | 状态 | 说明 |
 |---|---|---|
 | v1.0.0 | 已发布、已验证 | 锁定 120Hz 的稳定基线；对应提交 `eedfc30` |
-| v1.0.1 | 未发布 | 固件门放宽、开机状态处理和打包链路更新；当前不能视为已验证发布版 |
+| v1.0.1 | 未发布、未真机回归 | 对应提交 `1cdb06f`；固件门修正、global 变体、一次性 resync、CRLF 归一化 |
 
 本地 v1.0.1 包：
 
