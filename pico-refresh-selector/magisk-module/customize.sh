@@ -40,9 +40,19 @@ fi
 BASE_LIB_SHA256="c290a9f51214ff37b415c309c5facf80542024d40c22e5ae3cdeff9825a31fef"
 PATCHED_LIB_SHA256="32427922a3c695453ec85a1c3c454bd984db95b55f0de095689cdd2f8af36eea"
 BASE_LIB="/system/lib64/libpxrhmdservice.so"
-STOCK_DTBO_SHA256="307e702182e731b76e8bc0a4aec131a53e1ddf82e96f2f416e2f49129e6d46ac"
-V6_DTBO_SHA256="f0c10d1dd04dd9a7c46b319758dbdd5f7540fe06aaf807377d23392c71aa20ea"
 DTBO_PART="/dev/block/by-name/dtbo"
+
+# Two stock baselines and their matching 120Hz images. CN (Phoenix) and global
+# (Phoenix_ovs) firmware ship the same sixteen dtbo entries in different
+# orders and hash differently, so the patched image must be built from the
+# matching stock one — flashing a CN-ordered image onto a global unit would
+# move every entry and the bootloader would select the wrong board tree.
+# Both images patch every entry, so the module never needs to know which
+# entry a given unit actually boots.
+STOCK_DTBO_CN="307e702182e731b76e8bc0a4aec131a53e1ddf82e96f2f416e2f49129e6d46ac"
+STOCK_DTBO_INTL="bee2b0676e04d93135c660f1c80157afd06e52678432ea2db9f9c90b47007d9e"
+V6_DTBO_CN="a57573ae89a26bc37db10d8b258a25f2cf343b042246519144ff3213508ff385"
+V6_DTBO_INTL="0ab8b85ed85203bd0096f4a89f12d18a0746d7bd461a7d7c0e355ace727936e9"
 
 sha256_file() {
     local output digest
@@ -74,17 +84,13 @@ set_perm "$MODPATH/service.sh" 0 0 0755
 current_dtbo=$(sha256_file "$DTBO_PART") || abort "Unable to hash dtbo partition"
 
 case "$current_dtbo" in
-    "$STOCK_DTBO_SHA256")
-        ui_print "- Stock dtbo detected, backing up"
-        BACKUP="/sdcard/Download/pico4-dtbo-stock-backup.img"
-        dd if="$DTBO_PART" of="$BACKUP" bs=4096 >/dev/null 2>&1 || abort "dtbo backup failed"
-        chmod 644 "$BACKUP" 2>/dev/null
-        backup_check=$(sha256_file "$BACKUP")
-        [ "$backup_check" = "$STOCK_DTBO_SHA256" ] || abort "dtbo backup verification failed"
-        ui_print "- Backup: $BACKUP"
-        NEED_FLASH=1
+    "$STOCK_DTBO_CN")
+        DTBO_ENTRY="dtbo-cn.img"; DTBO_TARGET="$V6_DTBO_CN"; VARIANT="CN / Phoenix"
         ;;
-    "$V6_DTBO_SHA256")
+    "$STOCK_DTBO_INTL")
+        DTBO_ENTRY="dtbo-intl.img"; DTBO_TARGET="$V6_DTBO_INTL"; VARIANT="global / Phoenix_ovs"
+        ;;
+    "$V6_DTBO_CN"|"$V6_DTBO_INTL")
         ui_print "- 120Hz dtbo already flashed, skipping partition write"
         NEED_FLASH=0
         ;;
@@ -93,16 +99,28 @@ case "$current_dtbo" in
         ;;
 esac
 
+if [ "$NEED_FLASH" != "0" ]; then
+    ui_print "- Detected: $VARIANT"
+    ui_print "- Stock dtbo detected, backing up"
+    BACKUP="/sdcard/Download/pico4-dtbo-stock-backup.img"
+    dd if="$DTBO_PART" of="$BACKUP" bs=4096 >/dev/null 2>&1 || abort "dtbo backup failed"
+    chmod 644 "$BACKUP" 2>/dev/null
+    backup_check=$(sha256_file "$BACKUP")
+    [ "$backup_check" = "$current_dtbo" ] || abort "dtbo backup verification failed"
+    ui_print "- Backup: $BACKUP"
+    NEED_FLASH=1
+fi
+
 if [ "$NEED_FLASH" = "1" ]; then
-    ui_print "- Extracting 120Hz dtbo image"
-    unzip -o "$ZIPFILE" "dtbo.img" -d "$TMPDIR" >/dev/null 2>&1 || abort "Failed to extract dtbo.img"
-    dtbo_img=$(sha256_file "$TMPDIR/dtbo.img")
-    [ "$dtbo_img" = "$V6_DTBO_SHA256" ] || abort "Bundled dtbo.img is corrupt"
+    ui_print "- Extracting 120Hz dtbo image ($DTBO_ENTRY)"
+    unzip -o "$ZIPFILE" "$DTBO_ENTRY" -d "$TMPDIR" >/dev/null 2>&1 || abort "Failed to extract $DTBO_ENTRY"
+    dtbo_img=$(sha256_file "$TMPDIR/$DTBO_ENTRY")
+    [ "$dtbo_img" = "$DTBO_TARGET" ] || abort "Bundled $DTBO_ENTRY is corrupt"
     ui_print "- Flashing dtbo (panel 120Hz init)"
-    dd if="$TMPDIR/dtbo.img" of="$DTBO_PART" bs=4096 >/dev/null 2>&1 || abort "dtbo flash failed"
+    dd if="$TMPDIR/$DTBO_ENTRY" of="$DTBO_PART" bs=4096 >/dev/null 2>&1 || abort "dtbo flash failed"
     sync
     written=$(sha256_file "$DTBO_PART")
-    [ "$written" = "$V6_DTBO_SHA256" ] || abort "dtbo write verification failed"
+    [ "$written" = "$DTBO_TARGET" ] || abort "dtbo write verification failed"
     ui_print "- dtbo flashed and verified"
     # Arm the one-shot boot-time panel resync for the first boot after
     # flashing (consumed by service.sh). Healthy boots must not resync —

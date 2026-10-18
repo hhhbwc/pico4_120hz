@@ -3,3 +3,10 @@
 *.b64
 *.log
 __pycache__/
+
+# stock/extracted dtbo images (rebuild from official firmware, do not commit)
+dtbo-stock-*.img
+dtbo-120hz-universal-*.img
+dtbo-repro-*.img
+dtbo-120hz-v2-*.img
+*.img.orig
