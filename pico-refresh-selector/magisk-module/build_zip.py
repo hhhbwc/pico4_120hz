@@ -32,8 +32,10 @@ def add(zf: zipfile.ZipFile, arcname: str, src: Path, mode: int) -> None:
     info.external_attr = mode << 16
     info.compress_type = zipfile.ZIP_DEFLATED
     data = src.read_bytes()
-    if arcname.endswith(".sh") or arcname == "module.prop":
-        data = data.replace(b"\r\n", b"\n")  # shell cannot parse CRLF
+    if not arcname.endswith((".img", ".so")):
+        # shell cannot parse CRLF, and a core.autocrlf checkout leaks CRLF
+        # into every text entry, not just .sh and module.prop
+        data = data.replace(b"\r\n", b"\n")
     zf.writestr(info, data)
 
 

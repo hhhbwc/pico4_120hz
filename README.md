@@ -1,5 +1,7 @@
 # pico4_120hz
 
+> **项目交接入口**：先阅读 [`HANDOVER-120HZ.md`](HANDOVER-120HZ.md)。它是当前 120Hz 状态、发布门槛、安全红线和验证流程的权威摘要；本文保留完整技术历史和多语言说明。
+
 **PICO 4 显示刷新率研究：原生 72/90 Hz + 120 Hz DTBO 超频实验 + dsi120 内核模块**
 
 **PICO 4 display refresh-rate research: stock 72/90 Hz + 120 Hz DTBO overclock experiments + dsi120 kernel module**
@@ -9,6 +11,8 @@
 [中文](#中文) · [English](#english) · [Русский](#русский)
 
 > **当前状态 / Current status / Текущий статус**
+>
+> **权威状态、v1.0.1 发布门槛和安全红线见 [`HANDOVER-120HZ.md`](HANDOVER-120HZ.md)。** 下文保留完整技术历史；其中 v1.0.1 的自动重同步和固件门更新属于本地开发状态，未完成新一轮真机回归前不得视为已发布结论。
 >
 > **✅ 2026-09-06：锁定 120 Hz 方案已验证可用（Release v1.0.0）；⚠️ 实时多档切换存在黑屏 bug，待修。** 刷入 v6 DTBO + 配置映射补丁后，面板稳定运行 120 Hz（VSYNC 8333333 ns、时钟精确切换、内核零错误、游戏实测 100+ fps），刷机包已通过 Magisk 全流程实测。但 **任何离开 120 的实时 DFPS 切换都会黑屏**（二次确认：含开机自动切换；vfp 缩小方向可行、vfp 增大方向必黑，见已知问题）。唯一稳定架构 = 锁定 120（即 Release 方案）。设备当前已恢复原厂。
 >
@@ -520,7 +524,7 @@ python build_zip.py --dtbo ../pico4-display-analysis/dtbo-120hz-v6-init120.img
 
 ## 7. 安装
 
-**刷机包路径（推荐，需 root + Magisk）**：Magisk App → 模块 → 从本地安装 `pico4-120hz-v1.0.1.zip`。安装器会按组件校验固件（设备 `PICOA8110`、版本 `5.13.7*`、面板 `SHARP5K`）、校验原版 `libpxrhmdservice.so` 哈希与 dtbo 基线（v1.0.0 的整串指纹匹配已废弃，见 Issue #2）、备份原厂 dtbo 到 `/sdcard/Download/`、写分区并回读校验。重启后面板锁 120 Hz；开机约半分钟后会自动熄屏/亮屏一次做面板时序重同步（首刷前几分钟如有分界线/花屏属预期，见已知问题 3）。
+**刷机包路径（推荐，需 root + Magisk）**：Magisk App → 模块 → 从本地安装 `pico4-120hz-v1.0.1.zip`。安装器会按组件校验固件（设备 `PICOA8110`、版本 `5.13.7*`、面板 `SHARP5K`）、校验原版 `libpxrhmdservice.so` 哈希与 dtbo 基线（v1.0.0 的整串指纹匹配已废弃，见 Issue #2）、备份原厂 dtbo 到 `/sdcard/Download/`、写分区并回读校验。重启后面板锁 120 Hz；开机完成后数秒内会自动熄屏/亮屏一次做面板时序重同步（开机动画阶段执行，桌面/dock 不受影响；首刷如有分界线/花屏属预期，见已知问题 3）。
 
 **Xposed 模块路径（可选，桌面下拉菜单）**：
 
@@ -1103,7 +1107,7 @@ Toolchain: `compileSdk 35`, `minSdk 29`, `targetSdk 29`, `compileOnly de.robv.an
 
 ## 7. Install
 
-**Flashable-zip path (recommended, needs root + Magisk)**: Magisk App → Modules → Install from storage → `pico4-120hz-v1.0.1.zip`. The installer verifies the firmware component-wise (device `PICOA8110`, version `5.13.7*`, panel `SHARP5K`), checks the stock `libpxrhmdservice.so` hash and the dtbo baseline (the v1.0.0 whole-fingerprint match is retired, see issue #2), backs up the stock dtbo to `/sdcard/Download/`, then writes and re-reads the partition. After reboot the panel is locked at 120 Hz; about half a minute into each boot the module cycles the screen once to resync the panel timing (a split/corrupt frame in the first minutes after flashing is expected and clears itself — known issue 3).
+**Flashable-zip path (recommended, needs root + Magisk)**: Magisk App → Modules → Install from storage → `pico4-120hz-v1.0.1.zip`. The installer verifies the firmware component-wise (device `PICOA8110`, version `5.13.7*`, panel `SHARP5K`), checks the stock `libpxrhmdservice.so` hash and the dtbo baseline (the v1.0.0 whole-fingerprint match is retired, see issue #2), backs up the stock dtbo to `/sdcard/Download/`, then writes and re-reads the partition. After reboot the panel is locked at 120 Hz; a few seconds after boot completes the module cycles the screen once to resync the panel timing (it fires during the boot animation, before the desktop presents, so the launcher dock is untouched; a split/corrupt frame in the first seconds after flashing is expected and clears itself — known issue 3).
 
 **Xposed module path (optional, native dropdown in Settings)**:
 
@@ -1667,7 +1671,7 @@ cd pico-refresh-selector
 
 ## 7. Установка
 
-**Путь через прошиваемый zip (рекомендуется, нужны root + Magisk)**: Magisk App → Модули → Установить из хранилища → `pico4-120hz-v1.0.1.zip`. Установщик покомпонентно проверяет прошивку (устройство `PICOA8110`, версия `5.13.7*`, панель `SHARP5K`), сверяет хэш стоковой `libpxrhmdservice.so` и базу dtbo (целострокая проверка fingerprint из v1.0.0 упразднена, см. issue #2), бэкапит стоковый dtbo в `/sdcard/Download/`, затем пишет раздел и перечитывает его. После перезагрузки панель заблокирована на 120 Гц; примерно через полминуты после каждой загрузки модуль один раз гасит и включает экран для ресинхронизации таймингов панели (разделённая/искажённая картинка в первые минуты после прошивки ожидаема и уходит сама — известная проблема 3).
+**Путь через прошиваемый zip (рекомендуется, нужны root + Magisk)**: Magisk App → Модули → Установить из хранилища → `pico4-120hz-v1.0.1.zip`. Установщик покомпонентно проверяет прошивку (устройство `PICOA8110`, версия `5.13.7*`, панель `SHARP5K`), сверяет хэш стоковой `libpxrhmdservice.so` и базу dtbo (целострокая проверка fingerprint из v1.0.0 упразднена, см. issue #2), бэкапит стоковый dtbo в `/sdcard/Download/`, затем пишет раздел и перечитывает его. После перезагрузки панель заблокирована на 120 Гц; через несколько секунд после завершения загрузки модуль один раз гасит и включает экран для ресинхронизации таймингов панели (срабатывает ещё во время анимации загрузки, до появления рабочего стола, так что док лаунчера не затронут; разделённая/искажённая картинка в первые секунды после прошивки ожидаема и уходит сама — известная проблема 3).
 
 **Путь через Xposed-модуль (опционально, нативный выпадающий список в настройках)**:
 

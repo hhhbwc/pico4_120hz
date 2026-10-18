@@ -43,10 +43,14 @@ REQUIRED_CUSTOMIZE = (
     '"$(getprop ro.product.device)" != "PICOA8110"',
     "5.13.7*",
     '"$(getprop ro.pvr.hmd.type)" != "SHARP5K"',
+    "ro.build.id",  # firmware version lives here; incremental is smartcm.<ts>
+    "ro.build.version.incremental",  # kept only as a fallback
     "BASE_LIB_SHA256=",
     "c290a9f51214ff37b415c309c5facf80542024d40c22e5ae3cdeff9825a31fef",
+    "PATCHED_LIB_SHA256=",  # accept the active overlay on upgrade/reinstall
     "STOCK_DTBO_SHA256=",
     "V6_DTBO_SHA256=",
+    "screen_fix_once",  # one-shot resync armed only when dtbo is flashed
     "sha256_file",
 )
 FORBIDDEN_CUSTOMIZE = (
@@ -57,8 +61,8 @@ FORBIDDEN_CUSTOMIZE = (
 REQUIRED_SERVICE = (
     "sdk_refreshRate,120",
     "sys.pvr.display.type 120.000000",
-    "KEYCODE_POWER",  # boot panel resync (screen off/on re-runs panel init)
-    ".pico4_120hz_noscreenfix",
+    "MODDIR/screen_fix_once",  # one-shot resync, first boot after flash only
+    "KEYCODE_POWER",
 )
 
 REQUIRED_MODULE_PROP = (

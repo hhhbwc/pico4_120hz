@@ -12,22 +12,33 @@ ui_print "======================================"
 
 # Firmware gate, component-wise. 5.13.7 ships under several device-tree
 # variants (Phoenix, Phoenix_ovs) and build incrementals (smartcm.*); the
-# v1.0.0 whole-fingerprint match rejected all of those (issue #2). The real
-# safety net for the vendor-lib overlay is the stock-lib hash whitelist below.
+# v1.0.0 whole-fingerprint match rejected all of those (issue #2). The OS
+# version lives in ro.build.id — ro.build.version.incremental is a
+# smartcm.<timestamp> build number on every 5.13.7 unit (CN and global alike),
+# so matching 5.13.7* against it aborts on 100% of devices. The incremental
+# match stays only as a fallback for builds that do not populate ro.build.id.
 if [ "$(getprop ro.product.device)" != "PICOA8110" ]; then
     abort "Unsupported device: $(getprop ro.product.device)"
 fi
-case "$(getprop ro.build.version.incremental)" in
+case "$(getprop ro.build.id)" in
     5.13.7*) ;;
-    *) abort "Unsupported firmware: $(getprop ro.build.version.incremental) (need 5.13.7)" ;;
+    *)
+        case "$(getprop ro.build.version.incremental)" in
+            5.13.7*) ;;
+            *) abort "Unsupported firmware: id=$(getprop ro.build.id) incremental=$(getprop ro.build.version.incremental) (need 5.13.7; post these props to github.com/hhhbwc/pico4_120hz issue #2)" ;;
+        esac ;;
 esac
 if [ "$(getprop ro.pvr.hmd.type)" != "SHARP5K" ]; then
     abort "Unsupported panel: $(getprop ro.pvr.hmd.type)"
 fi
 
 # The overlay lib was patched from the 5.13.7 stock lib. Refuse to bind-mount
-# it over anything else, or hmdservice may crash at boot.
+# it over anything else, or hmdservice may crash at boot. On upgrade/reinstall
+# the running module's overlay is active in this namespace, so the mounted lib
+# hashes to the patched value — the base was verified at first install, accept
+# both.
 BASE_LIB_SHA256="c290a9f51214ff37b415c309c5facf80542024d40c22e5ae3cdeff9825a31fef"
+PATCHED_LIB_SHA256="32427922a3c695453ec85a1c3c454bd984db95b55f0de095689cdd2f8af36eea"
 BASE_LIB="/system/lib64/libpxrhmdservice.so"
 STOCK_DTBO_SHA256="307e702182e731b76e8bc0a4aec131a53e1ddf82e96f2f416e2f49129e6d46ac"
 V6_DTBO_SHA256="f0c10d1dd04dd9a7c46b319758dbdd5f7540fe06aaf807377d23392c71aa20ea"
@@ -48,7 +59,7 @@ if [ ! -b "$DTBO_PART" ]; then
 fi
 
 base_lib_hash=$(sha256_file "$BASE_LIB") || abort "Cannot hash $BASE_LIB"
-if [ "$base_lib_hash" != "$BASE_LIB_SHA256" ]; then
+if [ "$base_lib_hash" != "$BASE_LIB_SHA256" ] && [ "$base_lib_hash" != "$PATCHED_LIB_SHA256" ]; then
     abort "Stock libpxrhmdservice.so mismatch: $base_lib_hash (post this hash to github.com/hhhbwc/pico4_120hz issue #2)"
 fi
 
@@ -93,14 +104,18 @@ if [ "$NEED_FLASH" = "1" ]; then
     written=$(sha256_file "$DTBO_PART")
     [ "$written" = "$V6_DTBO_SHA256" ] || abort "dtbo write verification failed"
     ui_print "- dtbo flashed and verified"
+    # Arm the one-shot boot-time panel resync for the first boot after
+    # flashing (consumed by service.sh). Healthy boots must not resync —
+    # a forced panel re-init on them tears the bottom scanout.
+    touch "$MODPATH/screen_fix_once"
 fi
 
 ui_print "- Installing vendor config-map patch"
 ui_print "- Installing boot-time rate fix + panel resync"
 ui_print "======================================"
 ui_print " Reboot to apply. Panel runs 120Hz."
-ui_print " First minutes may show a split/corrupt"
-ui_print " frame until the auto screen-cycle runs."
+ui_print " A screen blink seconds after boot is"
+ui_print " the automatic panel resync - expected."
 ui_print " Restore stock: flash your dtbo"
 ui_print " backup + disable this module."
 ui_print "======================================"

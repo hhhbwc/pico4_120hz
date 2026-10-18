@@ -1,0 +1,243 @@
+# PICO 4 120Hz 项目交接文档
+
+**用途**：本文件是 `pico4_120hz` 项目的权威交接入口。内容只覆盖 PICO 4 物理 120Hz 解锁、验证、回滚和发布状态。
+
+**最后整理**：2026-10-12
+
+## 1. 当前结论
+
+当前已经确认可工作的方案是**锁定物理 120Hz**，不是稳定的 72/90/120Hz 实时三档切换。
+
+- v1.0.0：已发布，并完成过 Magisk 真机端到端验证。
+- v1.0.1：本地开发状态，未推送、未发布、未回复 GitHub issue；在用户明确完成新一轮真机测试前，不得发布。
+- 当前整理不执行刷机、不执行系统更新、不执行 Git push/tag/release。
+- PICO OS 5.13.8 及后续 OTA 存在 root 和恢复能力风险，**不要点系统更新**。
+
+> 任何文档或历史脚本若与本文件冲突，以本文件的“当前结论”和“安全红线”为准；历史分析只用于理解问题，不代表可以直接执行。
+
+## 2. 项目边界
+
+本目录是独立 Git 仓库：
+
+```text
+D:\pico\pico4_120hz\
+```
+
+它只负责显示刷新率研究和 120Hz 模块。以下内容不属于 120Hz 发布物：
+
+- `D:\pico\vd-mod\`：Virtual Desktop 头显端汉化和字体实验。
+- `D:\pico\vd-localizer\`：Stride/Xenko 通用本地化工具链。
+- `D:\pico\gallery-patch\`：PICO Ultra 系统应用移植/PMS 实验。
+- `D:\pico\vd-backup\`：VD 认证和应用数据备份。
+- `D:\pico\pre-reset-backup\`：设备恢复出厂、Magisk、APK 和原厂镜像备份。
+
+VD 的 PMS 修复、转区、dock 恢复和汉化都只是设备环境背景，不能写入 120Hz 的功能列表，也不能作为 120Hz 发布条件的替代品。
+
+## 3. Git 与发布状态
+
+整理前已确认：
+
+```text
+分支：main
+HEAD：ca45115
+origin/main：d5e3d48
+状态：本地领先远端 1 个提交
+```
+
+当前已有的未提交修改（不是本次整理产生的）：
+
+```text
+README.md
+pico-refresh-selector/magisk-module/customize.sh
+pico-refresh-selector/magisk-module/service.sh
+pico-refresh-selector/tools/audit_selector.py
+```
+
+### 版本矩阵
+
+| 版本 | 状态 | 说明 |
+|---|---|---|
+| v1.0.0 | 已发布、已验证 | 锁定 120Hz 的稳定基线；对应提交 `eedfc30` |
+| v1.0.1 | 未发布 | 固件门放宽、开机状态处理和打包链路更新；当前不能视为已验证发布版 |
+
+本地 v1.0.1 包：
+
+```text
+pico4-display-analysis/pico4-120hz-v1.0.1.zip
+```
+
+该包不能在未完成真机回归前上传 GitHub。发布前必须先形成干净、可追溯的提交，并重新计算产物 SHA-256。
+
+## 4. 生产方案原理
+
+稳定方案由三部分组成：
+
+1. v6 DTBO 以 120Hz 为基准时序，并把厂商 post-120 NT57900 面板初始化序列烘焙进主 `on-command`。
+2. 补丁后的 `libpxrhmdservice.so` 将 72、90、120 请求统一映射到 120 所在的配置 `cfg0`。
+3. Magisk `service.sh` 写入 120Hz 相关属性和配置，必要时做一次开机面板重同步。
+
+配置顺序实际为 `[120, 90, 72]`，因此 `cfg0` 是 120Hz。该设计规避了从 120Hz 实时切换到更大 VFP 的黑屏问题，但代价是不能提供可靠的真实三档切换。
+
+### 已确认的物理证据
+
+- VSYNC 周期：`8333333 ns`。
+- `BYTE_CLK = 165,606,750`。
+- `PIXEL_CLK = 220,809,000`。
+- 上述时钟与 `827 × 2225 × 120` 精确对应。
+- 关键测试中未发现 underrun、PLL 或 `new_hfp` 错误。
+- 游戏场景曾达到 100+ fps。
+
+SurfaceFlinger 的模式列表、PICO 属性或官方帧率显示都不能单独证明物理刷新率；验证必须优先看 DSI 实际时序和 pixel clock。
+
+## 5. 关键基线哈希
+
+| 组件 | SHA-256 |
+|---|---|
+| 原厂 DTBO | `307e702182e731b76e8bc0a4aec131a53e1ddf82e96f2f416e2f49129e6d46ac` |
+| v6 DTBO | `f0c10d1dd04dd9a7c46b319758dbdd5f7540fe06aaf807377d23392c71aa20ea` |
+| 原厂 `libpxrhmdservice.so` | `c290a9f51214ff37b415c309c5facf80542024d40c22e5ae3cdeff9825a31fef` |
+| 补丁 `libpxrhmdservice.so` | `32427922a3c695453ec85a1c3c454bd984db95b55f0de095689cdd2f8af36eea` |
+| 已验证 v1.0.0 ZIP | `af0ce5db6496a416d8fb74b7c2d4c685f3364a185ee86252163f6ba669804b6a` |
+| 本地 v1.0.1 ZIP（Phoenix / CN，2026-10-19 重打包） | `ce38dc233fa1ccb9a10d545a37ad475dcc7005a9f4eac0ae38c9d357c870e401` |
+
+v1.0.1 的本地 ZIP 不能沿用旧哈希；任何发布前重打包都要重新记录哈希，并确认产物对应干净提交。
+Phoenix_ovs（global）变体由 `build_zip_ovs.py` 单独打包，需要 global 机型的原厂 dtbo 转储做输入，尚未生成。
+
+## 6. 设备与固件范围
+
+已验证目标基线：
+
+```text
+型号：PICO 4 / PICOA8110 / Phoenix
+系统：PICO OS 5.13.7 / Android 10
+面板：Sharp LS026B3SA
+面板标识：SHARP5K
+SoC：Snapdragon 865
+```
+
+v1.0.1 的固件门允许 `5.13.7*` 的多个增量，但这不等于支持所有变体。DTBO、面板和原版 vendor library 仍必须命中严格的白名单哈希；哈希不匹配应安全中止。
+
+## 7. 安全红线
+
+- 永不刷系统分区。
+- 永不点系统更新，尤其不要升级到 5.13.8 或更高版本。
+- 不修改 `boot`、`vbmeta`、`dtbobak`、`GPT`、`super` 或其他无关分区。
+- 设备侧只使用已核对的 APK 安装/卸载和 systemless 模块；所有动作必须可逆。
+- 刷写 DTBO 前必须保留原厂 DTBO、`dtbobak` 和可用的 EDL/恢复路径。
+- 任何出现黑屏、花屏、持续重启、DSI/PLL/underrun 错误或异常温升时，立即回滚原厂 DTBO。
+- 不使用 `fastboot flash` 作为默认恢复路径；按现有设备条件使用已验证的 root/ADB/EDL 流程。
+- 不把 VD 汉化 APK、PMS 修复或 Ultra 移植模块混入 120Hz ZIP。
+
+## 8. 已知问题
+
+### 8.1 实时降档黑屏
+
+120→90/72 的实时切换会黑屏；90→120 的方向曾可工作。根因是面板的 immediate-porch DFPS 路径不能可靠处理增大 VFP 的切换。不要把实验性的真实多档选择器当成生产方案。
+
+### 8.2 窗口叠加细线伪影
+
+120Hz 下多层窗口叠加场景曾出现细线，单 Surface 桌面或游戏相对稳定。后续复现时应同时采集：
+
+- `dmesg` underrun 计数。
+- DDR/总线 devfreq 状态。
+- GPU busy 和合成器丢帧统计。
+
+在没有新证据前，应把它视为已知限制，而不是宣称已解决。
+
+### 8.3 首次刷入后的画面分裂/花屏
+
+早期版本可能在面板和主机时序尚未同步时出现黑屏、水平分界线或下半屏花屏；电源键熄屏再亮会重跑面板初始化。v1.0.1 试图把这一步自动化，但该版本尚未完成新的真机回归，因此不能把自动修复写成已验证事实。
+
+## 9. 文件与脚本分类
+
+### 生产/打包
+
+```text
+pico-refresh-selector/magisk-module/
+pico-refresh-selector/magisk-module/build_zip.py
+pico4-display-analysis/pico4-120hz-v1.0.1.zip
+```
+
+### 物理验证
+
+```text
+pico4-display-analysis/verify_refresh_rate.sh
+```
+
+验证重点是 DSI state、BYTE_CLK、PIXEL_CLK、VSYNC、内核错误和实际画面；不能只看 Android API 的模式名。
+
+### 构建和分析
+
+```text
+pico4-display-analysis/build_*.py
+pico4-display-analysis/patch_hmdservice_cfgmap.py
+pico4-display-analysis/extract_panel_config.py
+pico4-display-analysis/dsi120/
+```
+
+其中部分脚本依赖历史工具、外部输入或旧路径。现有 v6 二进制可以校验和重新包装，但当前 checkout 不保证能从 stock DTBO 完整重建全部 v6 产物。
+
+### 历史/实验，禁止直接刷写
+
+```text
+pico4-display-analysis/FINAL_120HZ_ANALYSIS.md
+pico4-display-analysis/FLASH_INSTRUCTIONS.md
+pico4-display-analysis/LS026B3SA_120HZ_FULL_CONFIG.md
+pico4-display-analysis/*candidate*
+pico4-display-analysis/*probe*
+```
+
+这些文件包含被后续 v6 结果推翻的分析或诊断候选。执行前必须以本文件和脚本内的哈希校验为准。
+
+## 10. 标准验证流程
+
+1. 记录设备型号、PICO OS、面板标识、当前 DTBO 哈希和 vendor library 哈希。
+2. 确认原厂 DTBO 备份和回滚路径可用。
+3. 只使用哈希匹配的生产包，安装前保存日志。
+4. 重启后检查 DTBO 是否实际生效、`service.sh` 是否成功运行。
+5. 使用 `verify_refresh_rate.sh` 采集 DSI timing、BYTE_CLK、PIXEL_CLK、VSYNC 和 dmesg。
+6. 检查桌面、窗口叠加、视频、游戏等场景，并记录黑屏、花屏、细线和温升。
+7. 连续重启验证状态是否稳定；确认卸载模块后能恢复原厂行为。
+8. 测试失败时立即恢复干净状态，再分析日志；不要在故障状态继续叠加 VD、PMS 或其他模块。
+
+## 11. v1.0.1 发布前清单
+
+- [x] 审核并提交 v1.0.1 改动，形成干净、可追溯提交（含固件门改用 `ro.build.id`）。
+- [x] 统一 README、中文/英文/俄文和脚本中“开机一次性重同步”的描述。
+- [x] 重新生成 ZIP、校验权限和哈希，并记录构建输入（`ce38dc23…`）。
+- [x] 打包脚本对所有文本条目做 CRLF 归一化（原来只处理 `.sh` 与 `module.prop`）。
+- [ ] 处理 `service.sh` 对 `$MODDIR` 的依赖，或用真机证明安装环境始终正确提供该变量。
+- [ ] 从原厂状态完成 fresh install。
+- [ ] 在已安装 v1.0.0 或同等状态下完成 reinstall。
+- [ ] 连续重启至少两次，确认第二次行为稳定且不会影响 dock。
+- [ ] 采集 DSI、VSYNC、pixel clock、dmesg 和目视结果。
+- [ ] 验证模块卸载、原厂 DTBO 回滚和恢复后再次启动。
+- [ ] 重新生成 ZIP、校验权限和哈希，并记录构建输入。
+- [ ] 由用户确认真实设备测试通过后，才允许 push、tag、创建 Release 或回复 issue。
+
+## 11b. 已知的用户可感知画质退化（2026-10-19 记录）
+
+用户在 120 Hz 下报告画面边缘发虚、移动拖影。三层可能原因，按排查成本排序：
+
+1. **渲染分辨率被动态下调**（最易验证）：120 Hz 使 GPU 负载 +33%，PICO 的动态分辨率
+   可能压低 eye buffer。先在 90/120 两档下对比实际渲染分辨率再谈面板问题。
+2. **面板模拟参数仍停在 90 Hz 标定**：`on-command` 里只有 `B9/EC` 门极对被切到 120
+   （`post-120-nt57900-on-command`），`E6` 大块、`D1/D2/D6/C2/B6/BE` 均无 120 Hz 版本，
+   且 `post-120` 序列比 `post-72/90` 少了 `e5 07` 与两组 `d5`。
+3. **DSI 链路超频 33%**：bitclk 993 MHz → 1325 MHz，超出该平台所有原生面板
+   （最高 1088 MHz）；`phy-timings` 被 NOP 后由内核 v4.0 算子重算，未经 1.3 GHz 验证。
+
+详见 `pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md`。
+
+## 12. 交接时的第一步
+
+接手者先阅读本文件，再阅读：
+
+```text
+README.md
+PROJECT_CHECK_2026-10-11.md
+pico4-display-analysis/README.md
+pico4-display-analysis/verify_refresh_rate.sh
+```
+
+然后检查 Git 状态和本地构建产物。不要直接执行历史 `FLASH_INSTRUCTIONS.md`，不要把 VD 汉化交接文档当作 120Hz 的技术依据，也不要在没有用户确认和真机证据时发布 GitHub。
