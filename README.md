@@ -14,11 +14,23 @@
 >
 > **权威状态、v1.0.1 发布门槛和安全红线见 [`HANDOVER-120HZ.md`](HANDOVER-120HZ.md)。** 下文保留完整技术历史；其中 v1.0.1 的自动重同步和固件门更新属于本地开发状态，未完成新一轮真机回归前不得视为已发布结论。
 >
+> **⚠️ 2026-10-19：一次把设备刷到无法开机的回滚事故，及拿 `*bak` 槽当真值的修复方法 —— 详见 [`RECOVERY.md`](RECOVERY.md)。** 起因是我用 `adb shell dd > hostfile` 拉 dtbo 当"回滚基线"，而 adb 流式传输会污染二进制（副本比分区大 7778 字节）；我截断到 24 MiB 后写回，等于塞进一份**字节错位**的 DTBO——与真原厂差 13.58%（3,418,346 字节），第 1 个 FDT 偏移即错位（`0x44495` → `0x44649`），设备树解析失败，bootloader 报 `Failed to load image from partition: Load Error`，设备彻底卡在 bootloader。修复方式是用 EDL 读出**硬件备份槽 `dtbobak`**（工程 abl 建的原厂槽，从未被写过）作为真值参照，确认真原厂 = `307e7021…`，写回后 30 秒正常开机。**由此确立两条铁律：① 二进制分区镜像只能来自 `edl-ng read-part` 或官方 firmware 包，绝不能用 `adb dd`；② 回滚前必须先读同机 `*bak` 槽做 sha 真值对照。** 本机实测分区大小已记入 `RECOVERY.md`（`dtbo` 24 MiB / `boot` 96 MiB / `abl` 1 MiB），刷前必须核对镜像大小以防写溢出。
+>
+> **⚠️ 2026-10-19: a rollback that bricked the device, and the `*bak`-slot ground-truth fix — see [`RECOVERY.md`](RECOVERY.md).** It started with my pulling dtbo via `adb shell dd > hostfile` as a "rollback baseline" — adb corrupts streamed binaries (the copy came out 7778 bytes larger than the partition). After truncating to 24 MiB and writing it back I had in fact pushed a **byte-shifted** DTBO: 13.58% (3,418,346 bytes) differ from real stock, and the very first FDT offset is misplaced (`0x44495` → `0x44649`), so the device tree failed to parse, the bootloader reported `Failed to load image from partition: Load Error`, and the device was stuck in the bootloader for good. The fix was to read the **hardware backup slot `dtbobak`** over EDL (the stock slot the engineering abl created and nothing ever wrote to) and use it as ground truth: real stock = `307e7021…`, written back and the device booted normally within 30 s. **Two rules now stand: ① binary partition images must come from `edl-ng read-part` or the official firmware package, never `adb dd`; ② before any rollback, read the matching `*bak` slot on the same device and compare SHA-256 first.** Measured partition sizes are recorded in `RECOVERY.md` (`dtbo` 24 MiB / `boot` 96 MiB / `abl` 1 MiB) — always verify image size before writing.
+>
+> **⚠️ 19.10.2026: откат, который «окирпичил» устройство, и восстановление по слоту `*bak` — см. [`RECOVERY.md`](RECOVERY.md).** Причина: я взял dtbo через `adb shell dd > hostfile` как «базу для отката», но adb портит бинарные данные (копия оказалась на 7778 байт больше раздела). После обрезки до 24 MiB и записи обратно в разделе оказался **сдвинутый по байтам** DTBO: от заводского отличается 13.58 % (3 418 346 байт), уже первое смещение FDT неверно (`0x44495` → `0x44649`), дерево устройств не распарсилось, загрузчик выдал `Failed to load image from partition: Load Error`, и устройство застряло в bootloader. Починка: читаю через EDL аппаратный слот-бэкап `dtbobak` (созданный инженерным abl и никогда не перезаписываемый) как эталон — заводской = `307e7021…`; после записи устройство штатно загрузилось за 30 секунд. **Два правила: ① бинарные образы разделов только из `edl-ng read-part` или официального firmware, никогда из `adb dd`; ② перед откатом читать одноимённый слот `*bak` на этом же устройстве и сверять SHA-256.**
+>
+> **🔬 2026-10-19：改走 EDL 直写 DTBO 实现 120 Hz，并定性了画质代价 —— 详见 [`pico4-display-analysis/EDL_120HZ_EXPERIMENT.md`](pico4-display-analysis/EDL_120HZ_EXPERIMENT.md)。** 我确认了 PICO 4 的 fastboot 必须先刷工程 abl 才能写分区，否则只能走 EDL(9008) 直写，于是用 `edl-ng write-part` 把 120 Hz DTBO 直接写进分区并读回校验，实跑测得链路时钟 pclk=220.8 MHz、bitclk≈1325 MHz、VSYNC 8.33 ms，120 Hz 真实可达且内核零报错。但换用厂商验证 PHY 后主观画质**无任何改善**——解析 DTBO 逐 entry 后确认：**LS026B3SA(SHARP5K) 原生只有 90 Hz 一个 timing 节点，没有 120 Hz 初始化/on-command，120 Hz 属纯超频，面板内部均衡/gamma 仍按 90 Hz 标定，偏色(蓝紫描边)/发雾/细线花屏是硬件层面的超频代价，DTBO 层面改不掉**。据此把设备**回滚到原厂 90 Hz**（dtbo 逐字节 = 原厂），并用 EDL 只读取证确认 `boot`/`vbmeta`/`dtbo`/`devinfo` 全部完好、无砖化。**当前默认保持原厂 90 Hz。**
+>
+> **🔬 2026-10-19: switched to writing DTBO directly over EDL for 120 Hz, and pinned down the quality cost — see [`pico4-display-analysis/EDL_120HZ_EXPERIMENT.md`](pico4-display-analysis/EDL_120HZ_EXPERIMENT.md).** I confirmed PICO 4's fastboot can only write partitions after an engineering abl is flashed (otherwise EDL/9008 direct-write is the only path), so I wrote the 120 Hz DTBO straight into the partition with `edl-ng write-part` and verified by read-back; measured pclk=220.8 MHz, bitclk≈1325 MHz, VSYNC 8.33 ms — 120 Hz genuinely reachable with zero kernel errors. But after switching to the vendor-validated PHY the subjective quality did **not** improve at all. Parsing every DTBO entry showed: **LS026B3SA (SHARP5K) has only a native 90 Hz timing node, no 120 Hz init/on-command — 120 Hz is pure overclock, the panel's internal EQ/gamma stay calibrated for 90 Hz, so the color fringing (blue/purple edges), haze and thin-line artifacting are a hardware-level overclock cost that DTBO tuning cannot fix.** I therefore **rolled the device back to stock 90 Hz** (dtbo byte-identical to stock) and confirmed via EDL read-only forensics that `boot`/`vbmeta`/`dtbo`/`devinfo` are all intact — no brick. **Default now stays at stock 90 Hz.**
+>
 > **✅ 2026-09-06：锁定 120 Hz 方案已验证可用（Release v1.0.0）；⚠️ 实时多档切换存在黑屏 bug，待修。** 刷入 v6 DTBO + 配置映射补丁后，面板稳定运行 120 Hz（VSYNC 8333333 ns、时钟精确切换、内核零错误、游戏实测 100+ fps），刷机包已通过 Magisk 全流程实测。但 **任何离开 120 的实时 DFPS 切换都会黑屏**（二次确认：含开机自动切换；vfp 缩小方向可行、vfp 增大方向必黑，见已知问题）。唯一稳定架构 = 锁定 120（即 Release 方案）。设备当前已恢复原厂。
 >
 > **✅ 2026-09-06: locked-120 Hz verified usable (Release v1.0.0); ⚠️ live multi-rate switching has a black-screen bug, unfixed.** With the v6 DTBO + config-map patch the panel runs a stable 120 Hz (VSYNC 8333333 ns, exact clock switch, zero kernel errors, a real game at 100+ fps), and the flashable zip passed a full Magisk end-to-end install test. But **any live DFPS switch away from 120 black-screens the panel** (re-confirmed: including the automatic boot-time switch; vfp-shrink direction works, vfp-grow direction always fails — see known issues). The only stable architecture = locked 120 (the Release design). The device has been restored to stock.
 >
 > **✅ 06.09.2026: заблокированные 120 Гц подтверждены (Release v1.0.0); ⚠️ живое переключение частот даёт чёрный экран, не исправлено.** С DTBO v6 + патчем карты конфигурации панель стабильно работает на 120 Гц, установщик прошёл полный тест. Но **любое живое переключение DFPS от 120 Гц даёт чёрный экран** (подтверждено дважды: включая автоматическое при загрузке; направление с уменьшением vfp работает, с увеличением — всегда отказ — см. известные проблемы). Единственная стабильная архитектура = блокировка на 120 Гц (дизайн из Release). Устройство восстановлено до заводского состояния.
+>
+> **🔬 19.10.2026: запись DTBO напрямую через EDL и выявленная цена качества.** Я подтвердил, что fastboot PICO 4 умеет писать разделы только после установки инженерного abl (иначе — только EDL/9008), записал 120-Гц DTBO через `edl-ng write-part` с проверкой чтением обратно: pclk=220.8 МГц, bitclk≈1325 МГц, VSYNC 8.33 мс — 120 Гц реально достижим без ошибок ядра. Но с валидированной PHY субъективное качество **не изменилось**. Разбор DTBO показал: **LS026B3SA (SHARP5K) имеет лишь нативный 90-Гц timing, без 120-Гц init/on-command — 120 Гц это чистый разгон, и цветная кайма, дымка и артефакты на тонких линиях являются аппаратной ценой разгона, которую DTBO не устраняет.** Устройство возвращено на заводские 90 Гц. Подробнее — в [`pico4-display-analysis/EDL_120HZ_EXPERIMENT.md`](pico4-display-analysis/EDL_120HZ_EXPERIMENT.md).
 
 ---
 
@@ -419,7 +431,12 @@ adb shell su -c "dmesg | grep -oE 'entered rate:[0-9]+' | sort | uniq -c"
 
 ## 5.1 当前设备状态与结论
 
-（2026-09-06 更新：本节为 v6 之前的历史状态。**当前设备运行 v6 镜像**，活动 dtbo SHA-256 `f0c10d1dd04dd9a7c46b319758dbdd5f7540fe06aaf807377d23392c71aa20ea`，面板稳定运行 120 Hz；`dtbobak` 仍保持原厂。）
+> **当前实况（2026-10-19 更新）：设备处于原厂状态。** 活动 `dtbo` 与 `dtbobak` 均为原厂
+> SHA-256 `307e702182e731b76e8bc0a4aec131a53e1ddf82e96f2f416e2f49129e6d46ac`，
+> `abl` 为原厂 `af6992ba…`，面板运行原厂 90/72 Hz。本节以下内容为 v6 之前的历史记录，
+> 其中"当前设备运行 v6 镜像、dtbo = `f0c10d1d…`、120 Hz 稳定运行"等描述**均已过时**。
+>
+> 2026-09-06 曾达到的状态：活动 dtbo SHA-256 `f0c10d1dd04dd9a7c46b319758dbdd5f7540fe06aaf807377d23392c71aa20ea`，面板稳定 120 Hz，`dtbobak` 保持原厂。
 
 设备当前已恢复原厂活动 DTBO，回读 SHA-256 为 `307e702182e731b76e8bc0a4aec131a53e1ddf82e96f2f416e2f49129e6d46ac`；`dtbobak` 同样保持原厂。原厂 Sharp LS026B3SA 节点重新公开真实的 90/72 Hz 模式。
 
@@ -615,6 +632,11 @@ pico4-display-analysis/
     setup_buildroot.sh           早期构建环境准备（已被设备配置同步取代）
     README.md                    模块构建/加载/参数文档
   FLASH_INSTRUCTIONS.md          boot 镜像补丁与刷写指南
+  EDL_120HZ_EXPERIMENT.md        EDL 直写 DTBO 实现 120Hz 全过程 + 画质代价定性（2026-10-19）
+  build_120_universal.py         通用 DTBO 构建器（patch 全部面板 entry，--phy keep/nop/scale）
+  gen_validated_phy.py           生成"厂商验证 PHY"版 120Hz 镜像
+  fdt_phy_parse.py               离线解析 DTBO，导出各面板 fragment 的 PHY 与关键词节点
+  forensics/                     EDL 只读取证：boot/vbmeta/vbmeta_system/devinfo/devcfg/featenabler
 pico-refresh-selector/
   app/src/main/java/com/picoxr/refreshselector/RefreshRateHook.java
   app/src/main/assets/xposed_init
@@ -653,6 +675,12 @@ docs/
 - [x] ~~在原始 DTBO 上完成 72↔90 运行时即时切换的稳定性验证~~（被 v6 取代：面板锁定 120 Hz，不再需要 72↔90 切换）
 - [ ] 扩展到 `system_server` 修正 `DisplayModeDirector`，做到开机自动生效
 - [x] 提供 Magisk 模块形式的一键安装（Releases v1.0.0）
+- [x] 打通 EDL(9008) 直写 DTBO 路径（fastboot 需工程 abl，否则只能 EDL），写入/读回/回滚全链路校验
+- [x] 实跑验证 120 Hz 链路时钟真实可达 1325 MHz（VSYNC 8.33ms、pclk 220.8MHz、内核零报错）
+- [x] 逐 entry 解析 DTBO，确认 LS026B3SA 原生无 120Hz timing/on-command，120Hz 属纯超频
+- [x] 用厂商验证 PHY（sharp_493_120，1325MHz）替换盲放大 PHY，证实画质无改善 → 根因定性为面板超频代价
+- [x] 回滚至原厂 90 Hz 并用 EDL 只读取证确认 boot/vbmeta/dtbo/devinfo 全部完好、无砖化
+- [ ] 取得 LS026B3SA 真实 120 Hz TCON 初始化序列，从面板层面消除超频画质代价（无厂商参考）
 
 
 ---

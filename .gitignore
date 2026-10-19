@@ -10,3 +10,13 @@ dtbo-120hz-universal-*.img
 dtbo-repro-*.img
 dtbo-120hz-v2-*.img
 *.img.orig
+
+# EDL forensics dumps: raw partition pulls from a specific device.
+# Never commit these - they are per-unit, contain serial/identity data,
+# and are re-obtainable with `edl-ng read-part`.
+pico4-display-analysis/forensics/
+
+# scratch analysis output
+pico4-display-analysis/stock_phy.txt
+pico4-display-analysis/*.log
+config-device.gz

@@ -30,6 +30,7 @@ Nothing is written to any device.
 from __future__ import annotations
 
 import hashlib
+import math
 import sys
 from pathlib import Path
 
@@ -80,12 +81,28 @@ def nop_property(buf: bytearray, prop: dict) -> None:
 
 
 def scale_property(buf: bytearray, prop: dict, ratio: float) -> None:
+    """Stretch every non-zero timing byte by the bit-clock ratio, rounding up.
+
+    The table's units are byte-clock cycles (bitclk/8), so multiplying the
+    counts by the rate ratio preserves each parameter's absolute duration.
+    Ceil, not round: a timing that comes out a fraction of a cycle short is
+    what breaks a link, one that is a fraction long merely wastes margin.
+    Zero bytes are skipped — they are "disabled"/spec-minimum fields.
+
+    This is deliberately the *conservative* variant. Per-byte scaling is not
+    a calibrated fit: across the five native anchor panels in this DTBO the
+    same byte is non-monotonic in bitclk (byte0 reads 0x18/0x25/0x2a/0x24 at
+    717/947/994/1088 MHz) and six of the fourteen saturate at 0x0a above
+    947 MHz, so no per-byte law can be fitted. Treat this as "never shorter
+    than the 993 MHz stock table", and A/B it against --phy nop, which lets
+    the kernel's own v4.0 calculator derive the values.
+    """
     voff = int(prop["value_offset"])
     for i in range(int(prop["value_length"])):
         old = buf[voff + i]
         if old == 0:
             continue
-        new = round(old * ratio)
+        new = math.ceil(old * ratio)
         if new < old:  # never shorten a timing parameter
             new = old
         if new > 0xFF:

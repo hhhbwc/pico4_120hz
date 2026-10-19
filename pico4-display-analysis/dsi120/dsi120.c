@@ -72,16 +72,27 @@ static unsigned int armed = 1;
 module_param(armed, uint, 0644);
 MODULE_PARM_DESC(armed, "0 = disarm the kprobe hook without unloading");
 
-/* 120 Hz geometry, derived in LS026B3SA_120HZ_FULL_CONFIG.md and verified
- * against the on-device DSI_VIDEO_MODE_TOTAL register:
+/* 120 Hz geometry. This MUST match the dtbo that is actually flashed.
+ *
+ * The shipped v6 keeps the stock geometry (htotal 827, vtotal 2225, vfp 57)
+ * and only raises qcom,mdss-dsi-panel-framerate to 120 — that is the
+ * configuration that reaches 120 Hz on hardware. The vfp=14 / vtotal=2182
+ * geometry these constants were first derived from is the dead v2a
+ * candidate (LS026B3SA_120HZ_FULL_CONFIG.md §6): it black-screens, so a
+ * clock switch programmed to 216.5 MHz would leave the link 2% slow
+ * against the panel's real line timing.
+ *
+ * Verified against the on-device DSI_VIDEO_MODE_TOTAL register at 90 Hz
+ * (0x08b0033a -> htotal=827, vtotal=2225) and the ratio bitclk = pclk * 6,
+ * which the 90 Hz PLL dump reproduces exactly (165,591,864 -> 993,551,184):
  *   htotal   = 827      (DSC-compressed: 2160 px -> 720 bytes + fp/bp/hpw)
- *   vtotal   = 2182     (2160 active + 4 vbp + 4 vpw + 14 vfp)
- *   pclk     = htotal * vtotal * fps = 827 * 2182 * 120 = 216,541,680 Hz
- *   bitclk   = pclk * 6  (verified ratio) = 1,299,250,080 Hz
- *   byte_clk = bitclk / 8 = 162,406,260 Hz
+ *   vtotal   = 2225     (2160 active + 4 vbp + 4 vpw + 57 vfp)
+ *   pclk     = htotal * vtotal * fps = 827 * 2225 * 120 = 220,788,600 Hz
+ *   bitclk   = pclk * 6  = 1,324,731,600 Hz
+ *   byte_clk = bitclk / 8 = 165,591,450 Hz
  */
-#define PCLK_120   216541680ULL
-#define BYTECLK_120 162406260ULL
+#define PCLK_120   220788600ULL
+#define BYTECLK_120 165591450ULL
 
 #define PCLK_90    165591864ULL   /* 827 * 2225 * 90  — stock 90 Hz reference */
 #define BYTECLK_90 124193898ULL

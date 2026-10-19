@@ -83,12 +83,21 @@ set_perm "$MODPATH/service.sh" 0 0 0755
 
 current_dtbo=$(sha256_file "$DTBO_PART") || abort "Unable to hash dtbo partition"
 
+# Pick the image for this unit, and decide in the same step whether the
+# partition has to be written. NEED_FLASH must be set by the matching branch:
+# an earlier revision initialised it to 0 and only ever set it to 1 inside the
+# block guarded by `[ "$NEED_FLASH" != "0" ]`, so the guard was false on the
+# stock path and the module installed the overlay lib without ever writing the
+# dtbo. Found by pico-refresh-selector/tools/dryrun_installer.sh.
+NEED_FLASH=0
 case "$current_dtbo" in
     "$STOCK_DTBO_CN")
         DTBO_ENTRY="dtbo-cn.img"; DTBO_TARGET="$V6_DTBO_CN"; VARIANT="CN / Phoenix"
+        NEED_FLASH=1
         ;;
     "$STOCK_DTBO_INTL")
         DTBO_ENTRY="dtbo-intl.img"; DTBO_TARGET="$V6_DTBO_INTL"; VARIANT="global / Phoenix_ovs"
+        NEED_FLASH=1
         ;;
     "$V6_DTBO_CN"|"$V6_DTBO_INTL")
         ui_print "- 120Hz dtbo already flashed, skipping partition write"
@@ -99,16 +108,17 @@ case "$current_dtbo" in
         ;;
 esac
 
-if [ "$NEED_FLASH" != "0" ]; then
+if [ "$NEED_FLASH" = "1" ]; then
     ui_print "- Detected: $VARIANT"
     ui_print "- Stock dtbo detected, backing up"
     BACKUP="/sdcard/Download/pico4-dtbo-stock-backup.img"
     dd if="$DTBO_PART" of="$BACKUP" bs=4096 >/dev/null 2>&1 || abort "dtbo backup failed"
-    chmod 644 "$BACKUP" 2>/dev/null
+    # Best effort: the backup's readability matters, but a chmod failure must not
+    # abort an otherwise good install on a recovery shell running with errexit.
+    chmod 644 "$BACKUP" 2>/dev/null || true
     backup_check=$(sha256_file "$BACKUP")
     [ "$backup_check" = "$current_dtbo" ] || abort "dtbo backup verification failed"
     ui_print "- Backup: $BACKUP"
-    NEED_FLASH=1
 fi
 
 if [ "$NEED_FLASH" = "1" ]; then
