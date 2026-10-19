@@ -1,7 +1,10 @@
 # 120Hz 画质问题（偏色/发雾/细线花屏）诊断与 PHY 修复
 
-> 2026-10-19 第二轮：刷入 `dtbo-120-scale.img`（盲放大 PHY）后，用户报告
+> 2026-10-19 第二轮：刷入 `dtbo-120-scale.img`（盲放大 PHY）后，主观观察到
 > 2D 边缘蓝紫描边、整体发雾、细线（瞄准射线）花屏。
+>
+> **本文档的最终结论已更新（第三轮）：换用厂商验证 PHY 后画质零改善，
+> PHY 不是根因，根因是面板无原生 120Hz。详见文末「最终定性」。**
 
 ## 现象
 - 2D 应用边缘出现蓝/紫色彩边（系统性色偏，非随机噪点）
@@ -41,11 +44,31 @@ SCALE  : 00 2e 0b 0b 22 2f 0c 0b 0c 03 06 00 26 12   (盲放大, 之前刷的, �
 - EDL `write-part dtbo` 成功，读回 sha `6077b6e1…` 逐字节一致；`reset` 重启正常。
 - 设备内 `dtbo` sha = `6077b6e1…`（持久化）；120Hz 实跑（VSYNC 8.33ms / fps=120.00001）。
 - dmesg 无 CRC/ECC/underflow/overflow 等链路报错。
-- **待用户主观确认**：蓝紫边/发雾/细线花屏是否改善。
+- **主观验证结果：无任何改善。** 蓝紫边、发雾、细线花屏三项全部依旧。
+
+## 最终定性（2026-10-19 第三轮，PHY 路线证伪）
+
+| 原假设 | 验证方式 | 结果 |
+|---|---|---|
+| 盲放大 PHY 参数错误导致偏色 | 换成厂商在 1325 MHz 上验证过的 `493_120` PHY | ❌ **证伪**——主观画质零改善 |
+| DSI 链路误码 | dmesg 全程监测 CRC/ECC/underflow/overflow | ❌ **排除**——内核从未报链路错误 |
+| GPU 动态分辨率下调 | `gpu_busy_percentage = 0%`、`cur_freq = 305 MHz`（上限 587） | ❌ **排除**——GPU 空闲，不存在降分辨率 |
+| **面板无原生 120Hz（EQ/gamma 按 90Hz 标定）** | 解析全部 16 个 DTBO entry，确认 `ls026b3sa` **只有 90Hz 一个 timing 节点** | ✅ **根因确认** |
+
+**结论**：120Hz 是纯超频。面板内部均衡/gamma/overdrive 仍按 90Hz 工作，
+偏色（蓝紫描边）、发雾、细线花屏是**硬件层面的超频代价**，
+DTBO 时序/PHY 层面**改不掉**。设备已于同日回滚到原厂 dtbo（`307e7021…`）。
+
+若将来要「120Hz + 干净画质」，需要的是 LS026B3SA 真实的 120Hz TCON 初始化序列
+（目前无厂商参考），而不是继续调 PHY。
 
 ## 回滚
-- 若变差：`dtbo-120-scale.img`（旧，仍偏色但曾用）/ `dtbo-device-pulled.img`（df09ffa4，原厂 90Hz）。
-- 用 edl-ng 同法 `write-part dtbo <回滚镜像>` 即可。
+- **真原厂 dtbo**：`dtbo-stock-cn-24mb.img`（sha `307e7021…`，24 MiB 整），
+  或现场 `edl-ng read-part dtbobak` 读出的同一份文件。
+  注：原厂 dtbo 内含 **72 Hz 与 90 Hz 两档** timing，模块禁用后设备按系统默认跑 72 Hz。
+- ⚠️ **不要用** `dtbo-device-pulled.img` / `dtbo-stock-90hz-24m.img`
+  （`df09ffa4…` / `970da2f5…`）—— 那是 `adb dd` 污染副本，刷进去会变砖。
+- 用 `edl-ng write-part dtbo <回滚镜像>` + `read-part` 校验 sha 即可。
 
 ## 坑
 - **不要**用 `adb shell dd ... > hostfile` 校验 24MB dtbo：adb 流式传二进制会损坏/追加

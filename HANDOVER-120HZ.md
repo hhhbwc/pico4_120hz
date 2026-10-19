@@ -9,7 +9,7 @@
 当前已经确认可工作的方案是**锁定物理 120Hz**，不是稳定的 72/90/120Hz 实时三档切换。
 
 - v1.0.0：已发布，并完成过 Magisk 真机端到端验证。
-- v1.0.1：本地开发状态，未推送、未发布、未回复 GitHub issue；在用户明确完成新一轮真机测试前，不得发布。
+- v1.0.1：本地开发状态，未推送、未发布、未回复 GitHub issue；在本人明确完成新一轮真机测试前，不得发布。
 - 当前整理不执行刷机、不执行系统更新、不执行 Git push/tag/release。
 - PICO OS 5.13.8 及后续 OTA 存在 root 和恢复能力风险，**不要点系统更新**。
 
@@ -209,21 +209,30 @@ pico4-display-analysis/*probe*
 - [ ] 采集 DSI、VSYNC、pixel clock、dmesg 和目视结果。
 - [ ] 验证模块卸载、原厂 DTBO 回滚和恢复后再次启动。
 - [ ] 重新生成 ZIP、校验权限和哈希，并记录构建输入。
-- [ ] 由用户确认真实设备测试通过后，才允许 push、tag、创建 Release 或回复 issue。
+- [ ] 由本人确认真实设备测试通过后，才允许 push、tag、创建 Release 或回复 issue。
 
-## 11b. 已知的用户可感知画质退化（2026-10-19 记录）
+## 11b. 画质退化：已定性（2026-10-19 实测结论，此前三层推测作废）
 
-用户在 120 Hz 下报告画面边缘发虚、移动拖影。三层可能原因，按排查成本排序：
+120 Hz 下报告的**画面边缘发虚 / 移动拖影 / 2D 边缘蓝紫描边 / 细线（瞄准射线）花屏**，
+原以为是三层原因，逐层实测后已全部排除，结论如下：
 
-1. **渲染分辨率被动态下调**（最易验证）：120 Hz 使 GPU 负载 +33%，PICO 的动态分辨率
-   可能压低 eye buffer。先在 90/120 两档下对比实际渲染分辨率再谈面板问题。
-2. **面板模拟参数仍停在 90 Hz 标定**：`on-command` 里只有 `B9/EC` 门极对被切到 120
-   （`post-120-nt57900-on-command`），`E6` 大块、`D1/D2/D6/C2/B6/BE` 均无 120 Hz 版本，
-   且 `post-120` 序列比 `post-72/90` 少了 `e5 07` 与两组 `d5`。
-3. **DSI 链路超频 33%**：bitclk 993 MHz → 1325 MHz，超出该平台所有原生面板
-   （最高 1088 MHz）；`phy-timings` 被 NOP 后由内核 v4.0 算子重算，未经 1.3 GHz 验证。
+| 原推测 | 实测结果 |
+|---|---|
+| ① 渲染分辨率被动态下调 | **排除**：`gpu_busy_percentage = 0%`、`cur_freq = 305 MHz`（上限 587 MHz），GPU 完全空闲，不存在降分辨率 |
+| ② 面板模拟参数停在 90 Hz 标定 | **确认为根因**：解析全部 16 个 DTBO entry 后确认，LS026B3SA(SHARP5K) **只有 90 Hz 一个 timing 节点**，没有 120 Hz 的 on-command / TCON 序列 |
+| ③ DSI 链路超频 33% | **实测无害**：PHY 由「线性放大 1.334×」换成厂商在 1325 MHz 上验证过的值（`00250a0a1b250a0a0a0204001f0f`）后，**主观画质零改善**；dmesg 全程无 CRC/ECC/underflow/overflow |
 
-详见 `pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md`。
+**结论**：120 Hz 是纯超频，面板内部均衡/gamma/overdrive 仍按 90 Hz 标定，
+偏色/发雾/细线花屏是**硬件层面的超频代价，DTBO 层面改不掉**。
+设备已于 2026-10-19 回滚到原厂 dtbo（`307e7021…`），Magisk 模块禁用。
+**实测当前运行在 PICO 出厂默认档 72 Hz**（`supportedModes` = 90/72，
+`defaultModeId=2`；dmesg `dsi_bridge_enable entered rate:72`）——
+原厂并非默认 90 Hz，90 Hz 是系统设置里的可选档。
+
+若将来要「既要 120 Hz 又要干净画质」，需要的是面板级 120 Hz 初始化序列
+（LS026B3SA 真实 TCON 序列，目前无厂商参考），而不是继续改 DTBO 时序或 PHY。
+
+详见 `pico4-display-analysis/EDL_120HZ_EXPERIMENT.md`。
 
 ## 12. 交接时的第一步
 
@@ -236,4 +245,4 @@ pico4-display-analysis/README.md
 pico4-display-analysis/verify_refresh_rate.sh
 ```
 
-然后检查 Git 状态和本地构建产物。不要直接执行历史 `FLASH_INSTRUCTIONS.md`，不要把 VD 汉化交接文档当作 120Hz 的技术依据，也不要在没有用户确认和真机证据时发布 GitHub。
+然后检查 Git 状态和本地构建产物。不要直接执行历史 `FLASH_INSTRUCTIONS.md`，不要把 VD 汉化交接文档当作 120Hz 的技术依据，也不要在没有真机证据的情况下发布 GitHub。

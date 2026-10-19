@@ -21,25 +21,34 @@
 ### 分区布局（`/dev/block/by-name`）
 | 分区 | 设备节点 | 大小 |
 |------|---------|------|
-| abl | sde8 | 1 MB |
-| ablbak | sde31 | 1 MB |
-| boot | sde11 | 96 MB |
-| bootbak | sde34 | 96 MB |
-| dtbo | sde17 | 24 MB |
-| dtbobak | sde40 | 24 MB |
+| abl | sde8 | 1 MiB = 1,048,576 B |
+| ablbak | sde31 | 1 MiB = 1,048,576 B |
+| boot | sde11 | 96 MiB = 100,663,296 B |
+| bootbak | sde34 | 96 MiB = 100,663,296 B |
+| dtbo | sde17 | **24 MiB = 25,165,824 B** |
+| dtbobak | sde40 | **24 MiB = 25,165,824 B** |
 | vbmeta | sde9 | 64 KB |
 
-> **关键安全事实**：`dtbo` 与 `dtbobak` 是**两个独立分区**。快刷只写 `dtbo`，
-> `dtbobak` 始终保留上一份镜像，是硬件级回滚槽。本机两者当前内容一致
-> （均为 `df09ffa4…`，见下）。
+> ⚠️ **尺寸必须是精确字节数**。历史上我因为「分区大小」这个数字本身搞错，
+> 写出过一份比分区大 7778 字节的镜像还往里刷（见 §5 血泪教训）。EDL 写入前
+> 一律先核对 `stat -c%s <img>` == 分区字节数。
 
-### 当前 dtbo 现状（已从设备拉取存档）
-- 设备当前 dtbo 哈希：`df09ffa40c90c3807c622b35ca2eea5b1b7def5da8f66e2b036fb4256fd863a7`
-- 本地存档：`pico4-display-analysis/dtbo-device-pulled.img`（24,173,602 字节，与分区一致）
-- **重要**：此镜像内部 DTBO 表的 `dt_offset` 字段滞后于真实 FDT 位置（16 个真实 FDT
-  魔数偏移比表声明偏移大几百~上千字节），即**表是坏的**（dev-keys 工程镜像特征）。
-  设备靠连续布局/其它机制仍能启动，但第三方工具按表解析会失败。**切勿用此镜像做
-  「按表偏移」的工具往返读写**——应始终以整分区 `dd` 方式备份/恢复。
+> **关键安全事实**：`dtbo` 与 `dtbobak` 是**两个独立分区**。写 `dtbo` 不会动
+> `dtbobak`，后者是工程 abl 建的原厂备份槽，是本机唯一可信的「真原厂」真值源。
+> 本机当前两者均为真原厂 `307e7021…`（2026-10-19 已恢复）。
+
+### 当前 dtbo 现状（2026-10-19 恢复后）
+- 设备 `dtbo` = **原厂 `307e702182e731b7…`**，逐字节等于 `dtbobak`。
+- 设备 `abl` = **原厂 `af6992ba…`**，逐字节等于
+  `more-picohaxx-tool/backup/abl/abl.elf`；工程 abl 早已恢复，本机不在工程 abl 状态。
+- 权威镜像：`pico4-display-analysis/dtbo-stock-cn-24mb.img`（24 MiB，`307e7021…`），
+  以及 `forensics/dtbobak-now.img`（EDL 现场读出的同一份真值）。
+- **不再使用** `dtbo-device-pulled.img` / `dtbo-stock-90hz-24m.img`
+  （`970da2f5…`）—— 那是 `adb dd` 污染副本，刷进去会变砖（§5）。
+
+> 关于「DTBO 表 `dt_offset` 滞后」：那是我早期用**污染副本**做表-偏移解析得出的
+> 结论，**不成立**。用真原厂 `307e7021…` 解析，16 个 FDT 块偏移与表声明一致。
+> 教训是：任何对 DTBO 的结论都必须先确认所用镜像的来源可信。
 
 ---
 
@@ -57,10 +66,22 @@
 
 ---
 
-## 2. Fastboot 路径（本机已解锁 → 直接可用）
+## 2. Fastboot 路径（本机实测：**写分区被拒**，只能用于只读查询）
 
-本机 `device_state=unlocked`，**不需要工程 abl、不需要 unlock 码**即可
-`fastboot flash`。下面流程仅「若将来锁回 / 换机」时参考。
+本机 fastboot 层面显示 `unlocked: yes`，但 **2026-10-19 实测所有写分区命令被拒**：
+
+```
+oem command is not allowed without unlocktoken authority
+CmdFlash is not allowed without unlocktoken authority
+flashing get_unlock_ability -> Critical partition: 1, Normal partition: (空)
+```
+
+即：`unlocked` 标志在，但 **critical partition 的 unlocktoken 授权并未取得**。
+因此本机 **fastboot 只能做只读查询**（`devices` / `getvar` / `continue`），
+**任何 `fastboot flash` 都不能用**。写分区走 §3 的 EDL 路径。
+
+> 若将来需要恢复 fastboot 写权限，more-picohaxx 的做法是先 EDL 刷早期工程 abl
+> 再解锁（见 §2.2 / §3.4）。本机当前 abl 是原厂 `af6992ba…`，不在该状态。
 
 ### 2.1 unlock 码生成算法（more-picohaxx）
 ```
@@ -75,28 +96,33 @@ else:
 ```
 本机：serial=`1669527880` → **`picoF93DMXJ3`**。
 
-### 2.2 解锁流程（仅当设备锁定时）
+### 2.2 解锁流程（仅当设备锁定时；本机已解锁，**本节仅存档参考**）
+
+> ⚠️ 本节含 `fastboot flash abl` —— 这是**破坏性极大**的操作（改 bootloader）。
+> 本机当前 **abl 是原厂 `af6992ba…`，已解锁，模块正常**，**不要执行本节**。
+> 只有在设备确实锁死、且已完整备份的前提下才考虑。
+
 1. 备份数据（解锁会清 userdata）。
 2. 刷工程 abl：`fastboot flash abl tools/engineering/abl.elf` + `fastboot flash devinfo tools/engineering/devinfo`。
 3. `fastboot oem picoF93DMXJ3 unlock` → `fastboot flashing unlock` → `fastboot flashing unlock_critical` → `fastboot oem setenforce 0`。
 4. `fastboot reboot bootloader` 确认 `Device unlocked: true`；若仍 locked 就重复（RPMB 写入偶发不立即生效）。
-5. 刷回原厂 abl（解锁位存 RPMB，刷回原 abl 仍保持解锁）。
+5. 刷回原厂 abl（解锁位存 RPMB，刷回原 abl 仍保持解锁）——
+   more-picohaxx README 称此步用于 *restore boot capability*。
 
-### 2.3 刷 dtbo 的安全流程（本项目核心）
+> 补充：工程 abl 的代价是官方文档明说的 *unstable boot*。
+> 本机 2026-10-19 实测 abl 为**原厂**、引导正常，可作为「工程 abl 已恢复」的判据。
+
+### 2.3 只读查询（本机 fastboot 仅支持这些）
 工具链：`D:\more-picohaxx-tool-1.3.10\tools\fastboot.exe`
 
 ```bat
-adb reboot bootloader
-fastboot devices                      # 确认已连
-fastboot flash dtbo <要刷的 24MB 镜像>.img
-fastboot reboot
+fastboot devices                :: 确认设备在 fastboot
+fastboot getvar all             :: 只读变量（分区表、unlocked/secure 等）
+fastboot continue               :: 尝试继续启动（不写任何分区）
 ```
-**回滚（若黑屏/显示异常但 bootloader 仍活）：**
-```bat
-fastboot flash dtbo dtbo-device-pulled.img   # 本机当前可用镜像（本地存档）
-# 或退回硬件槽：fastboot flash dtbo <原厂 24MB dtbo>
-```
-> 显示变砖（黑屏/花屏但能进 fastboot）≈ 100% 可救：只刷 dtbo，不动 boot/abl。
+
+> ⚠️ **本机不要用 `fastboot flash`**（见本节开头，会被 unlocktoken 拒绝）。
+> 刷 dtbo 一律走 §3 EDL 路径。
 
 ---
 
@@ -108,7 +134,7 @@ fastboot flash dtbo dtbo-device-pulled.img   # 本机当前可用镜像（本地
 - `D:\more-picohaxx-tool-1.3.10\tools\engineering\abl.elf` + `devinfo`（解锁用）
 
 ### 3.1 进入 EDL
-用户手动：**Vol Up + Vol Down + Power**（黑屏）。或 `fastboot reboot edl`。
+手动进 EDL：**Vol Up + Vol Down + Power**（黑屏）。或 `fastboot reboot edl`。
 
 ### 3.2 备份（EDL 下，整分区）
 ```bat
@@ -130,20 +156,24 @@ more-picohaxx 的方法：EDL 拉出 stock boot → Windows 上 magiskboot patch
 
 ---
 
-## 4. 本项目分层安全（快刷前必做）
+## 4. 本项目分层安全（写入前必做）
 
-1. **第 1 层（最快）**：`fastboot flash dtbo <回滚镜像>` —— 显示变砖但 bootloader 活。
-2. **第 2 层（硬件槽）**：`dtbobak` 分区保留上一份；必要时 `fastboot flash dtbo <从 dtbobak 读出的镜像>`。
-3. **第 3 层（EDL）**：用户进 EDL 后，`edl-ng + firehose` 整片或按分区恢复
-   （`abl`/`boot`/`dtbo`/`vbmeta`）。
+1. **第 1 层（EDL 直写 + 读回校验）**：`edl-ng write-part dtbo` → 立刻
+   `read-part` 回来比 sha256。这是本机唯一可用且已验证的写入路径。
+2. **第 2 层（硬件槽真值）**：`dtbobak` 分区保留原厂内容，**从未被写过**。
+   任何回滚前先 `read-part dtbobak` 读出真值，比对后再决定写什么。
+3. **第 3 层（其他分区）**：EDL 下按分区恢复 `abl` / `boot` / `dtbo` / `vbmeta`。
+   镜像必须来自 `edl-ng read-part` 或官方 firmware 包。
 
-### 刷前 checklist（每次快刷前逐项确认）
-- [ ] 已 `dd` 整分区备份当前 dtbo 到本地，sha256 记录。
-- [ ] 目标镜像尺寸 = 24,173,602 字节（与分区一致），且 sha256 已知。
-- [ ] 确认设备 `device_state=unlocked`（否则先走 §2.2）。
+### 写入前 checklist（每次写 dtbo 前逐项确认）
+- [ ] 目标镜像大小 **== 25,165,824 字节（24 MiB 整）**，且 sha256 已记录。
+- [ ] 目标镜像来源可信：`edl-ng read-part` 或官方 firmware 包。
+      **绝不能用 `adb shell dd > hostfile`**（会污染，见 §5）。
+- [ ] 镜像头部 magic = `0xD7B7AB1E`，且能数出 16 个 FDT 块（`d00dfeed`）。
 - [ ] 目标镜像与设备**固件版本/region** 匹配（见下方「禁忌」）。
-- [ ] 已把回滚镜像（当前可用 dtbo）放在手边，且能 `fastboot flash dtbo` 成功。
-- [ ] 用户已知晓：变砖后自己进 EDL（Vol Up+Vol Down+Power），我再 EDL 恢复。
+- [ ] 回滚真值已就位：本地 `dtbo-stock-cn-24mb.img`（`307e7021…`），
+      或现场 `read-part dtbobak` 读出的文件。
+- [ ] 已知晓变砖后的自救路径：手动进 EDL（Vol Up + Vol Down + Power）。
 
 ---
 
@@ -165,12 +195,17 @@ more-picohaxx 的方法：EDL 拉出 stock boot → Windows 上 magiskboot patch
 - **不要拿 8 月参考固件（b9650/b9665）构建的 v6 直刷本机**。本机跑的是
   2025-10 的 dev-keys 工程固件，dtbo/lib 哈希均不匹配，`v1.0.1` 模块会直接
   abort（lib 不匹配 + dtbo 白名单未知）。必须基于**本机实际 dtbo** 就地 patch。
-- **不要按 DTBO 表偏移解析本机 dtbo**（表是坏的）。始终整分区 `dd`。
-- **校验 24MB dtbo 用设备内 `dd … | sha256sum`**，不要用主机侧文件 sha（adb 传输会改字节）。
+- **不要再相信「本机 DTBO 表是坏的」这个旧结论**。它源于污染副本。真原厂
+  `307e7021…` 的 `dt_offset` 与实际 FDT 位置一致，16 个 entry 全部可按表解析。
+- **校验 24 MiB dtbo 用设备内 `dd … | sha256sum` 或 EDL `read-part`**，
+  不要用主机侧 `adb shell dd > file` 得到的文件 sha（会被污染）。
 - 解锁会清 userdata；EDL 全片 dump/restore 是破坏性的，只在该走 EDL 时才做。
-- 工程 abl 开机可能变慢或偶发进 EDL；解锁位在 RPMB，刷回原 abl 不影响解锁状态。
+- 本机 abl 是**原厂**，不是工程 abl。解锁标志在 RPMB，与 abl 版本无关。
 - **设备引导失败时不要用 `fastboot reboot` 反复拉起**——那只是重启回 bootloader，
   会形成死循环。正确做法是回 EDL 读分区做二进制取证。
+- **120 Hz 画质问题不要再在 DTBO 层找解**。已定性：LS026B3SA(SHARP5K) 只有
+  90 Hz 原生 timing，120 Hz 是超频，蓝紫描边/发雾/细线花屏是硬件代价。
+  详见 `pico4-display-analysis/EDL_120HZ_EXPERIMENT.md`。
 
 ---
 
@@ -178,14 +213,18 @@ more-picohaxx 的方法：EDL 拉出 stock boot → Windows 上 magiskboot patch
 
 刷任何分区前，**必须先核对镜像大小 == 分区大小**，防止写溢出损坏相邻分区。
 
-| 分区 | 大小 | 备注 |
+| 分区 | 大小（字节） | 备注 |
 |---|---|---|
-| `abl` | 1.00 MiB | 本机 = `af6992ba…`（= 原厂 abl，工程 abl 早已恢复） |
-| `boot` | 96.00 MiB | Magisk patched（ramdisk 1.70MB，含 magisk） |
-| `bootbak` | 96.00 MiB | 原厂 boot（ramdisk 0.79MB，**不含** magisk） |
-| `vbmeta` | 0.06 MiB | |
-| `dtbo` | **24.00 MiB** | 本机真原厂 = `307e7021…` |
-| `dtbobak` | 24.00 MiB | 原厂 dtbo 备份槽，**真值参照物** |
+| `abl` | 1,048,576 | 本机 = `af6992ba…`（= 原厂 abl，工程 abl 早已恢复） |
+| `ablbak` | 1,048,576 | 与 `abl` 内容一致（原厂） |
+| `boot` | 100,663,296 | Magisk patched（ramdisk 1.70 MiB，含 magisk） |
+| `bootbak` | 100,663,296 | 原厂 boot（ramdisk 0.79 MiB，**不含** magisk） |
+| `vbmeta` | 65,536 | `AVB0` + avbtool 1.1.0 签名 |
+| `dtbo` | **25,165,824** | 本机真原厂 = `307e7021…` |
+| `dtbobak` | 25,165,824 | 原厂 dtbo 备份槽，**真值参照物** |
+
+> 这张表来自 `edl-ng printgpt`（LUN 4）实测，不是估算。
+> **写任何分区前先核对镜像字节数等于上表数字。**
 
 LBA（512B/扇区，LUN 4）：`dtbo` = 155466-161609，`uefisecapp` 紧接 161610。
 
@@ -197,24 +236,28 @@ LBA（512B/扇区，LUN 4）：`dtbo` = 155466-161609，`uefisecapp` 紧接 1616
 ```bat
 set TOOLS=D:\more-picohaxx-tool-1.3.10\tools
 set FH=%TOOLS%\firehoses\prog_firehose_ddr.elf
+set STOCK=D:\pico\pico4_120hz\pico4-display-analysis\dtbo-stock-cn-24mb.img
 
-:: 快刷 dtbo（fastboot 需先刷工程 abl 才有权限）
-%TOOLS%\fastboot.exe flash dtbo <img>.img
-%TOOLS%\fastboot.exe reboot
-
-:: EDL 直写 dtbo（本项目实际走的路径，绕开 unlocktoken）
+:: ---- EDL 直写 dtbo（本机唯一可用的写入路径，绕开 unlocktoken）----
+:: 写前必查：镜像字节数 == 25165824
 %TOOLS%\edl-ng.exe -l %FH% write-part dtbo <img>.img
-%TOOLS%\edl-ng.exe -l %FH% read-part dtbo verify.img   :: 读回校验 sha
+%TOOLS%\edl-ng.exe -l %FH% read-part dtbo verify.img    :: 读回校验 sha256
 %TOOLS%\edl-ng.exe -l %FH% reset
 
-:: 回滚到真原厂（务必用这个，不要用 dtbo-device-pulled.img —— 那份是坏的）
-set STOCK=D:\pico\pico4_120hz\pico4-display-analysis\dtbo-stock-cn-24mb.img
+:: ---- 回滚到真原厂 ----
 %TOOLS%\edl-ng.exe -l %FH% write-part dtbo %STOCK%
-:: 或现场从硬件备份槽取真值：
+:: 或现场从硬件备份槽取真值（最可靠）：
 %TOOLS%\edl-ng.exe -l %FH% read-part dtbobak stock.img
 %TOOLS%\edl-ng.exe -l %FH% write-part dtbo stock.img
+
+:: ---- fastboot 只读（本机 flash 被拒，仅供查询）----
+%TOOLS%\fastboot.exe devices
+%TOOLS%\fastboot.exe getvar all
 ```
 
-> ⚠️ `dtbo-device-pulled.img` / `dtbo-stock-90hz-24m.img`（sha `970da2f5…`）是
-> **损坏镜像**，写进去会导致设备无法开机。正确原厂是 `dtbo-stock-cn-24mb.img`
-> （sha `307e7021…`）或现场 `read-part dtbobak`。
+> ⚠️ **不可使用的镜像**：`dtbo-device-pulled.img` / `dtbo-device-dtbobak.img` /
+> `dtbo-stock-90hz-24m.img`（`df09ffa4…` / `970da2f5…`）均为 `adb dd` 污染副本，
+> 写进去会导致设备**无法开机**。正确原厂只有 `dtbo-stock-cn-24mb.img`
+> （`307e7021…`），或现场 `read-part dtbobak` 读出的文件。
+>
+> ⚠️ **不要用 `fastboot flash dtbo`**：本机 unlocktoken 未授权，必被拒绝。

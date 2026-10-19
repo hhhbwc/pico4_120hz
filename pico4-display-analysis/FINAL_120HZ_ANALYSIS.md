@@ -117,7 +117,7 @@ echo "p:clk_probe dsi_clk_set_pixel_clk_rate" > kprobe_events
 2. PICO 的驱动有 bug，120Hz 路径没走通
 3. 需要特定的条件（如 FalconCV3 机型）才启用 120Hz
 
-无论哪种情况，都不是用户侧能解决的。DTBO 修改已经做到了极致——`entered rate:120` 成功，但硬件没跟上。
+无论哪种情况，都不是使用者侧能解决的。DTBO 修改已经做到了极致——`entered rate:120` 成功，但硬件没跟上。
 
 **建议**：放弃 120Hz，接受 90Hz 作为这块面板的物理上限。
 
