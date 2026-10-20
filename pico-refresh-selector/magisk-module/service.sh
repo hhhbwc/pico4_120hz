@@ -6,6 +6,17 @@
 # at the boot default (72). Also write the authoritative configuration-service
 # keys (fresh installs carry sdk_refreshRate=90) and the persistent panel type.
 
+# Magisk normally exports MODDIR for module scripts. Fall back to the fixed
+# module id so the one-shot resync marker is never silently missed on an
+# install path that does not.
+MODDIR="${MODDIR:-/data/adb/modules/pico4_120hz}"
+NOSCREENFIX="${NOSCREENFIX:-/sdcard/Download/.pico4_120hz_noscreenfix}"
+
+# ConfigurationService AIDL transaction 4 = setConfigProperty.
+setcfg() {
+    service call ConfigurationService 4 s16 "$1" i32 0 s16 "$2" s16 "" s16 "" i32 1 >/dev/null 2>&1
+}
+
 (
     until [ "$(getprop sys.boot_completed)" = "1" ]; do sleep 1; done
 
@@ -19,6 +30,13 @@
     while [ "$tries" -lt 30 ]; do
         tries=$((tries+1))
         r=$(service call ConfigurationService 4 s16 com.picovr.settings i32 0 s16 sdk_refreshRate,120 s16 "" s16 "" i32 1 2>/dev/null)
+        # Stock PICO supersamples the eye buffer at 2816x2816 per eye; the panel
+        # is 2160x2160.  Clamp to native or the GPU never has headroom for the
+        # 120 Hz ATW pass (measured FrmGpu 27-30 ms at 2816 vs 15.5 ms at 2160).
+        setcfg android os_eyebuffer_width,2160
+        setcfg android os_eyebuffer_height,2160
+        setcfg pxr_config_package sdk_eyebufferX,2160
+        setcfg pxr_config_package sdk_eyebufferY,2160
         case "$r" in
             *Result:*"00000001"*) ok=1; break ;;
         esac
@@ -44,10 +62,28 @@
     # than power-key events but is 0444, unwritable even for root.
     if [ -f "$MODDIR/screen_fix_once" ]; then
         rm -f "$MODDIR/screen_fix_once"
-        sleep 2
-        input keyevent KEYCODE_POWER
-        sleep 2
-        input keyevent KEYCODE_POWER
-        log -t pico4_120hz "panel resync: one-shot after flash, screen cycled off/on"
+        if [ -f "$NOSCREENFIX" ]; then
+            log -t pico4_120hz "panel resync skipped: $NOSCREENFIX present"
+        else
+            sleep 2
+            input keyevent KEYCODE_POWER
+            sleep 2
+            input keyevent KEYCODE_POWER
+            log -t pico4_120hz "panel resync: one-shot after flash, screen cycled off/on"
+        fi
     fi
+
+    # The powerlevel rules also carry sdk_eyebufferX/Y=2816 and the OS starts
+    # with os_eyebuffer=0; keep the native 2160 clamp applied while the shell
+    # settles.  This runs in the main background subshell, not a nested one,
+    # so it is not reaped when the parent script exits.
+    n=0
+    while [ "$n" -lt 12 ]; do
+        setcfg android os_eyebuffer_width,2160
+        setcfg android os_eyebuffer_height,2160
+        setcfg pxr_config_package sdk_eyebufferX,2160
+        setcfg pxr_config_package sdk_eyebufferY,2160
+        sleep 5
+        n=$((n+1))
+    done
 ) &

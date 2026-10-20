@@ -1,0 +1,133 @@
+//phoenix
+//sdcard/psmart/canary/pxr_config.txt
+
+//render texture size
+xrRenderTextureWidth = 1656
+xrRenderTextureHeight = 1822
+
+//Distortion
+xrDistortionEqnType = 2
+xrDistortionC10K0 = 1.0
+xrDistortionC10K1 = 0.389489
+xrDistortionC10K2 = 0.405335
+xrDistortionC10K3 = 0.362734
+xrDistortionC10K4 = 0.199037
+xrDistortionC10K5 = 0.589155
+xrDistortionC10K6 = 0.719351
+xrDistortionC10K7 = 0.769024
+xrDistortionC10K8 = 0.799983
+xrDistortionC10K9 = 0.822515
+xrDistortionC10K10 = 0.840281
+
+//for red chromatic aberration
+xrChromaticAberration0 = -0.002894
+xrChromaticAberration1 = -0.007057
+xrChromaticAberration4 = -0.007586
+//for blue chromatic aberration
+xrChromaticAberration2 = 0.006197
+xrChromaticAberration3 = 0.014590
+xrChromaticAberration5 = 0.013590
+
+//HMD
+xrScreenGap = 0.0032176
+xrLensSeparation = 0.060030
+xrMetersPerTanAngleAtCenter = 0.040326
+xrHorizontalOffsetMeters = 0.0
+xrOpticalOffsetLeftX = 0.000000
+xrOpticalOffsetLeftY = 0.000000
+xrOpticalOffsetRightX = 0.000000
+xrOpticalOffsetRightY = 0.000000
+
+//Screen Properties
+xrWidthPixels = 3664
+xrHeightPixels = 1920
+xrWidthMeters = 0.1203624
+xrDisableLensCorrectionPico = false
+
+//Distortion Mode
+xrDistortionMode = 1
+xrPWarpMeshCols = 50
+xrPWarpMeshRows = 50
+
+//FFR
+xrEnableFoveationSubsampled = 0
+
+//FFR Low Level
+xrFoveationLowGain = 3.0f
+xrFoveationLowArea = 1.0f
+xrFoveationLowMinimum = 0.125f
+
+//FFR  Mid Level
+xrFoveationMidGain = 4.0f
+xrFoveationMidArea = 1.0f
+xrFoveationMidMinimum = 0.125f
+
+//FFR High Level
+xrFoveationHighGain = 6.0f
+xrFoveationHighArea = 1.0f
+xrFoveationHighMinimum = 0.0625f
+
+//FFR Top High Level
+xrFoveationTopHighGain = 7.0f
+xrFoveationTopHighArea = 0.0f
+xrFoveationTopHighMinimum = 0.0625f
+
+//0:use new buffer 1:use back buffer
+xrEnableBackRT = 0
+
+//IPD
+xrIPDMin = 0.050
+xrIPDMax = 0.080
+
+//Stencilmesh
+xrStencilMeshRadius = 1.0f
+xrStencilMeshEnabled = false
+//Log by peter
+xrCompositorLogLevel = 4
+xrRuntimeLogLevel = 4
+xrPxrPluginLogLevel = 4
+xrUnityLogLevel = 4
+xrUnRealLogLevel = 4
+xrNativeLogLevel = 4
+//fps by peter
+xrShowFPS = 0
+//Tracking Origin by peter
+xrEnableFloorLevel = true
+xrEnableStageLevel = true
+xrNeckModelX = 0.0
+xrNeckModelY = 0.075
+xrNeckModelZ = 0.0805
+xrDisplayRefreshRate = 72.0
+//fps by colin
+xrShowWarpFPS = false
+//GuardianSystem
+xrEnableBoundary = 129
+xrDialogConfigs = 36704496
+xrGuardianSystemConfigs = 13179161
+xrCallByConfirm = 1
+xrEyeTextureFov0 = 95.0
+xrEyeTextureFov1 = 95.0
+xrCoordGridWidthScale = 2.2
+xrCoordGridHeightScale = 2.2
+xrCoordGridIpd = 0.0
+xrDstcToShowRoomBdry = 0.5
+xrDstcToShowRoomBdryComp = 0.4
+xrDstcToShowPntBdry = 0.4
+xrDstcToShowPntBdryComp = 0.2
+xrDstcToShowSeeThrough = 0.15
+xrDstcToShowSeeThroughComp = 0.1
+xrDstcToShowDialog1 = -0.05
+xrDstcToBlackWorld = -3
+xrDstcToBlackWorldComp = -3.05
+xrDstcToShowDialog3 = -3.05
+xrDstcOfRn2ShowRmBdry = 0.2
+xrDstcOfRn2ShowRmBdryComp = 0.0
+xrDstcOfRn2ShowPntBdry = 0.05
+xrDstcOfRn2ShowPntBdryComp = 0.0
+xrDialogStepThreshold = 0.5
+//reset sensor
+xrEnable6Dof = 1
+xrControllerType = 6
+xrEnableChromatic = 1
+xrMiniVsyncBackStep = 4
+xrServiceMode = 2

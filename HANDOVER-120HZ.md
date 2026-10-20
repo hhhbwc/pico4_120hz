@@ -2,26 +2,29 @@
 
 **用途**：本文件是 `pico4_120hz` 项目的权威交接入口。内容只覆盖 PICO 4 物理 120Hz 解锁、验证、回滚和发布状态。
 
-**最后整理**：2026-10-12
+**最后整理**：2026-10-20
+
+> **2026-10-20 v1.1.0 发布更新**：v1.1.0 是当前发布版本，替代未单独发布的 v1.0.1。
+> 真机回归已完成：stock → v1.0.0 → v1.1.0 升级、stock 全新安装、uninstall → stock 恢复；
+> 当前设备已恢复官方 72Hz。本发布为 **CN / Phoenix 专用**，INTL/OVS 不在包内。
+> 安装、升级、卸载和回滚见 [README.md](README.md) 与 [QUICKSTART.md](QUICKSTART.md)。
 
 ## 1. 当前结论
 
 当前已经确认可工作的方案是**锁定物理 120Hz**，不是稳定的 72/90/120Hz 实时三档切换。
 
 - v1.0.0：已发布，并完成过 Magisk 真机端到端验证。
-- v1.0.1：本地开发状态，未推送、未发布、未回复 GitHub issue；在本人明确完成新一轮真机测试前，不得发布。
-- 当前整理不执行刷机、不执行系统更新、不执行 Git push/tag/release。
+- v1.0.1：未单独发布；固件门、Phoenix_ovs、一次性 resync 等修复已并入 v1.1.0。
+- v1.1.0：当前发布版本。眼缓冲 2816→2160、`xrMiniVsyncBackStep=4`、120Hz SDK 校准、
+  CN 升级/卸载支持和 stock 回滚镜像已通过真机回归。
+- 发布前最后一步：提交/推送并打 tag（见 §11）。
 - PICO OS 5.13.8 及后续 OTA 存在 root 和恢复能力风险，**不要点系统更新**。
 
 > 任何文档或历史脚本若与本文件冲突，以本文件的“当前结论”和“安全红线”为准；历史分析只用于理解问题，不代表可以直接执行。
 
 ## 2. 项目边界
 
-本目录是独立 Git 仓库：
-
-```text
-D:\pico\pico4_120hz\
-```
+本目录是独立 Git 仓库，路径以 `git rev-parse --show-toplevel` 为准（作者原工作机为 `D:\pico\pico4_120hz\`）。
 
 它只负责显示刷新率研究和 120Hz 模块。以下内容不属于 120Hz 发布物：
 
@@ -35,14 +38,16 @@ VD 的 PMS 修复、转区、dock 恢复和汉化都只是设备环境背景，�
 
 ## 3. Git 与发布状态
 
-2026-10-19 更新（工作树已清空，全部改动已进提交）：
+2026-10-20 更新（基于远端最新状态审查；修复在工作树，未提交）：
 
 ```text
-分支：main
-HEAD：1cdb06f
-origin/main：d5e3d48
-状态：本地领先远端 2 个提交，未推送
+基线：origin/main = 2136057
+工作分支：fix/repo-review-20261020
+状态：工作树含审查修复，尚未提交/推送
 ```
+
+本地 `main` 另有 2 个仅本地提交（`5ab2040` GPU 源码包、`731f776` GPU 监控脚本），
+未合入本分支，也不属于 120Hz 发布物。
 
 `ca45115` 的固件门判据错误（用 `ro.build.version.incremental` 匹配 `5.13.7*`，
 而该属性在所有 5.13.7 设备上都是 `smartcm.<时间戳>`，导致 100% abort），
@@ -54,14 +59,15 @@ origin/main：d5e3d48
 | 版本 | 状态 | 说明 |
 |---|---|---|
 | v1.0.0 | 已发布、已验证 | 锁定 120Hz 的稳定基线；对应提交 `eedfc30` |
-| v1.0.1 | 未发布、未真机回归 | 对应提交 `1cdb06f`；固件门修正、global 变体、一次性 resync、CRLF 归一化 |
+| v1.0.1 | 未发布、未真机回归 | 源码含 `ca45115` + `1cdb06f` + `3ddbdbd`；固件门修正、CN/INTL 通用 dtbo、Phoenix_ovs 支持、一次性 resync、CRLF 归一化 |
 
-本地 v1.0.1 包：
+当前 checkout 没有已打包的 v1.0.1 ZIP：
 
 ```text
-pico4-display-analysis/pico4-120hz-v1.0.1.zip
+pico4-display-analysis/pico4-120hz-v1.0.1.zip   # 不存在，需用 build_zip.py 重新生成
 ```
 
+旧记录中的 `ce38dc23…` 对应 v6 单条目镜像的旧打包，已随 `3ddbdbd` 改为 CN/INTL 通用镜像而作废。
 该包不能在未完成真机回归前上传 GitHub。发布前必须先形成干净、可追溯的提交，并重新计算产物 SHA-256。
 
 ## 4. 生产方案原理
@@ -89,15 +95,24 @@ SurfaceFlinger 的模式列表、PICO 属性或官方帧率显示都不能单独
 
 | 组件 | SHA-256 |
 |---|---|
-| 原厂 DTBO | `307e702182e731b76e8bc0a4aec131a53e1ddf82e96f2f416e2f49129e6d46ac` |
-| v6 DTBO | `f0c10d1dd04dd9a7c46b319758dbdd5f7540fe06aaf807377d23392c71aa20ea` |
+| 原厂 DTBO（CN / Phoenix） | `307e702182e731b76e8bc0a4aec131a53e1ddf82e96f2f416e2f49129e6d46ac` |
+| 原厂 DTBO（global 通用基线） | `bee2b0676e04d93135c660f1c80157afd06e52678432ea2db9f9c90b47007d9e` |
+| 120Hz 通用 DTBO（CN 构建） | `a57573ae89a26bc37db10d8b258a25f2cf343b042246519144ff3213508ff385` |
+| 120Hz 通用 DTBO（global 构建） | `0ab8b85ed85203bd0096f4a89f12d18a0746d7bd461a7d7c0e355ace727936e9` |
+| 原厂 DTBO（Phoenix_ovs） | `f4d6073c669d81aa0a811ea4476f7a89d01bf8975a931d2b2548f237a2cda992` |
+| 120Hz DTBO（Phoenix_ovs，entry 6 in-place） | `d138d5d68e64be3209b8d5024c7f10fd120dc3d2d83fd703a31fe09b3a6b5123` |
 | 原厂 `libpxrhmdservice.so` | `c290a9f51214ff37b415c309c5facf80542024d40c22e5ae3cdeff9825a31fef` |
-| 补丁 `libpxrhmdservice.so` | `32427922a3c695453ec85a1c3c454bd984db95b55f0de095689cdd2f8af36eea` |
+| 补丁 `libpxrhmdservice.so`（v1.0.0） | `32427922a3c695453ec85a1c3c454bd984db95b55f0de095689cdd2f8af36eea` |
+| 补丁 `libpxrhmdservice.so`（v1.1.0，含 config-rate 120） | `8b4431d4c8f7ebec4bdead981800780347f376e10da10bdb90d6f2977187c829` |
+| v1.1.0 runtime `pxr_config.txt`（backstep 4） | `95937d0b24c83335d5d79bf782f67f2be8e760c789a40cd116b9fafc40f59125` |
+| v1.1.0 ZIP（CN） | `3a7590ddcf12f1c03fed10a077dad206e23826073298c2888a431ad48836c9be` |
 | 已验证 v1.0.0 ZIP | `af0ce5db6496a416d8fb74b7c2d4c685f3364a185ee86252163f6ba669804b6a` |
-| 本地 v1.0.1 ZIP（Phoenix / CN，2026-10-19 重打包） | `ce38dc233fa1ccb9a10d545a37ad475dcc7005a9f4eac0ae38c9d357c870e401` |
+| v6 init120 DTBO（= v1.0.0 / v1.1.0 内置 120 镜像） | `f0c10d1dd04dd9a7c46b319758dbdd5f7540fe06aaf807377d23392c71aa20ea` |
+| 旧本地 v1.0.1 ZIP（历史，文件已不存在） | `ce38dc233fa1ccb9a10d545a37ad475dcc7005a9f4eac0ae38c9d357c870e401` |
 
-v1.0.1 的本地 ZIP 不能沿用旧哈希；任何发布前重打包都要重新记录哈希，并确认产物对应干净提交。
-Phoenix_ovs（global）变体由 `build_zip_ovs.py` 单独打包，需要 global 机型的原厂 dtbo 转储做输入，尚未生成。
+任何发布前重打包都要重新记录哈希，并确认产物对应干净提交。
+v1.1.0 为 **CN-only** 发布；INTL/Phoenix_ovs 构建不包含在本发布内。需要时从历史提交恢复
+`build_zip_ovs.py`，并补齐对应机型的 stock DTBO 转储后再生成 entry-6 镜像。
 
 ## 6. 设备与固件范围
 
@@ -142,7 +157,7 @@ v1.0.1 的固件门允许 `5.13.7*` 的多个增量，但这不等于支持所�
 
 ### 8.3 首次刷入后的画面分裂/花屏
 
-早期版本可能在面板和主机时序尚未同步时出现黑屏、水平分界线或下半屏花屏；电源键熄屏再亮会重跑面板初始化。v1.0.1 试图把这一步自动化，但该版本尚未完成新的真机回归，因此不能把自动修复写成已验证事实。
+早期版本可能在面板和主机时序尚未同步时出现黑屏、水平分界线或下半屏花屏；电源键熄屏再亮会重跑面板初始化。v1.0.1 已改为一次性自动处理：安装器只在真正写入 dtbo 时放置 `screen_fix_once`，`service.sh` 在随后那次开机消费；该版本尚未完成新的真机回归，因此不能把自动修复写成已验证事实。
 
 ## 9. 文件与脚本分类
 
@@ -151,7 +166,7 @@ v1.0.1 的固件门允许 `5.13.7*` 的多个增量，但这不等于支持所�
 ```text
 pico-refresh-selector/magisk-module/
 pico-refresh-selector/magisk-module/build_zip.py
-pico4-display-analysis/pico4-120hz-v1.0.1.zip
+# 产物 pico4-display-analysis/pico4-120hz-v1.1.0.zip 不入库，按需构建
 ```
 
 ### 物理验证
@@ -199,13 +214,15 @@ pico4-display-analysis/*probe*
 ## 11. v1.0.1 发布前清单
 
 - [x] 审核并提交 v1.0.1 改动，形成干净、可追溯提交（含固件门改用 `ro.build.id`）。
-- [x] 统一 README、中文/英文/俄文和脚本中“开机一次性重同步”的描述。
-- [x] 重新生成 ZIP、校验权限和哈希，并记录构建输入（`ce38dc23…`）。
+- [x] 统一 README、中文/英文/俄文和脚本中“一次性重同步”的描述。
+- [ ] 重新生成 ZIP（CN/INTL 通用镜像布局）、校验权限和哈希，并记录构建输入（旧 `ce38dc23…` 已作废）。
 - [x] 打包脚本对所有文本条目做 CRLF 归一化（原来只处理 `.sh` 与 `module.prop`）。
-- [ ] 处理 `service.sh` 对 `$MODDIR` 的依赖，或用真机证明安装环境始终正确提供该变量。
-- [ ] 从原厂状态完成 fresh install。
-- [ ] 在已安装 v1.0.0 或同等状态下完成 reinstall。
-- [ ] 连续重启至少两次，确认第二次行为稳定且不会影响 dock。
+- [x] `service.sh` 对 `$MODDIR` 增加固定路径兜底；安装器只在写入 dtbo 时放置 `screen_fix_once`（dry-run 已验证）。
+- [x] 从原厂状态完成 fresh install（2026-10-20，v1.1.0 zip）。
+- [x] 在已安装 v1.0.0 状态下完成 v1.1.0 覆盖升级（旧 lib/DTBO 白名单通过）。
+- [x] 卸载 v1.1.0 后恢复 stock DTBO/lib/配置/72Hz（2026-10-20）。
+- [x] 连续重启多次，120Hz/眼缓冲/backstep 均稳定生效。
+- [ ] 提交、推送并创建 v1.1.0 Release（当前步骤）。
 - [ ] 采集 DSI、VSYNC、pixel clock、dmesg 和目视结果。
 - [ ] 验证模块卸载、原厂 DTBO 回滚和恢复后再次启动。
 - [ ] 重新生成 ZIP、校验权限和哈希，并记录构建输入。

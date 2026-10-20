@@ -54,6 +54,11 @@ REQUIRED_CUSTOMIZE = (
     "V6_DTBO_INTL=",
     "DTBO_ENTRY=",  # per-variant image, never a single dtbo.img
     "screen_fix_once",  # one-shot resync armed only when dtbo is flashed
+    "Bundled libpxrhmdservice.so is corrupt",  # extracted overlay verified
+    "PREV_LIB_SHA256=",  # v1.0.0 lib accepted on upgrade
+    "uninstall.sh",  # stock restore runs from the module dir
+    "dtbo-stock.img",  # verified stock image for uninstall
+    "Bundled stock dtbo is corrupt",
     "sha256_file",
 )
 FORBIDDEN_CUSTOMIZE = (
@@ -65,13 +70,16 @@ REQUIRED_SERVICE = (
     "sdk_refreshRate,120",
     "sys.pvr.display.type 120.000000",
     "MODDIR/screen_fix_once",  # one-shot resync, first boot after flash only
+    "NOSCREENFIX",  # documented opt-out file
     "KEYCODE_POWER",
+    "os_eyebuffer_width,2160",  # native eye buffer, GPU headroom
+    "sdk_eyebufferX,2160",
 )
 
 REQUIRED_MODULE_PROP = (
     "id=pico4_120hz",
-    "versionCode=2",
-    "version=v1.0.1",
+    "versionCode=3",
+    "version=v1.1.0",
 )
 
 # Strings the running dex must carry (module identity + chosen-rate restore).
