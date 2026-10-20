@@ -17,6 +17,23 @@ setcfg() {
     service call ConfigurationService 4 s16 "$1" i32 0 s16 "$2" s16 "" s16 "" i32 1 >/dev/null 2>&1
 }
 
+# V-Sleep snapshots and restores the eyebuffer itself; clamping underneath it
+# would break its low-power state.
+vsleep_owned() {
+    [ "$(settings get global pico_power_coord_v2_effective_owner 2>/dev/null)" = "vsleep" ] && return 0
+    [ "$(settings get global pico_power_coord_v2_phase 2>/dev/null)" = "restoring" ] && return 0
+    [ "$(settings get global pico_vsleep_enabled 2>/dev/null)" = "1" ] && return 0
+    return 1
+}
+
+clamp_eyebuffer() {
+    setcfg android os_eyebuffer_width,2160
+    setcfg android os_eyebuffer_height,2160
+    setcfg pxr_config_package sdk_eyebuffer,2160
+    setcfg pxr_config_package sdk_eyebufferX,2160
+    setcfg pxr_config_package sdk_eyebufferY,2160
+}
+
 (
     until [ "$(getprop sys.boot_completed)" = "1" ]; do sleep 1; done
 
@@ -33,10 +50,7 @@ setcfg() {
         # Stock PICO supersamples the eye buffer at 2816x2816 per eye; the panel
         # is 2160x2160.  Clamp to native or the GPU never has headroom for the
         # 120 Hz ATW pass (measured FrmGpu 27-30 ms at 2816 vs 15.5 ms at 2160).
-        setcfg android os_eyebuffer_width,2160
-        setcfg android os_eyebuffer_height,2160
-        setcfg pxr_config_package sdk_eyebufferX,2160
-        setcfg pxr_config_package sdk_eyebufferY,2160
+        vsleep_owned || clamp_eyebuffer
         case "$r" in
             *Result:*"00000001"*) ok=1; break ;;
         esac
@@ -79,11 +93,18 @@ setcfg() {
     # so it is not reaped when the parent script exits.
     n=0
     while [ "$n" -lt 12 ]; do
-        setcfg android os_eyebuffer_width,2160
-        setcfg android os_eyebuffer_height,2160
-        setcfg pxr_config_package sdk_eyebufferX,2160
-        setcfg pxr_config_package sdk_eyebufferY,2160
+        vsleep_owned || clamp_eyebuffer
         sleep 5
         n=$((n+1))
+    done
+
+    # Pico3dResolution (com.hamer.res3d) can rewrite sdk_eyebuffer at any time.
+    # At 120 Hz the native 2160 clamp is the arbitration winner, but V-Sleep
+    # keeps ownership while it is active or restoring.
+    while true; do
+        sleep 30
+        [ "$(getprop persist.pvr.display.type 2>/dev/null)" = "jdi493120" ] || continue
+        vsleep_owned && continue
+        clamp_eyebuffer
     done
 ) &

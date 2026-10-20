@@ -12,6 +12,8 @@
 > 其他国际基线（bee2b067）不在本发布内。
 >
 > 新手直接看 **[QUICKSTART.md](QUICKSTART.md)**；我的完整实验记录在 **[pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md](pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md)**。
+>
+> **源码更新（v1.2.0 之后，未重发 zip）：** `service.sh` 增加 Pico3dResolution 兼容——每 30s 把 `sdk_eyebuffer` / `sdk_eyebufferX/Y` / `os_eyebuffer_*` 压回 2160，V-Sleep 生效或恢复期间让位。DTBO 镜像不在仓库，所以我没有重打 120Hz zip；重新构建时会自动带上。
 
 ### 我做了什么
 
@@ -127,6 +129,7 @@ adb shell getprop sys.pvr.display.type
 
 ### 版本历史
 
+- **v1.2.0+ 源码（未重发 zip）**：`service.sh` 增加 Res3D 兼容——每 30s 把 `sdk_eyebuffer` / `sdk_eyebufferX/Y` / `os_eyebuffer_*` 压回 2160，V-Sleep 期间让位。
 - **v1.2.0（2026-10-20）**：新增 Phoenix_ovs（国际版 b9666）支持；安装器按 stock DTBO 自动选择 CN/OVS 镜像与 stock 回滚镜像；CN 路径已完成真机回归。
 - **v1.1.0（2026-10-20）**：眼缓冲 2816→2160（FrmGpu 约减半）、`xrMiniVsyncBackStep=4` 修复底部撕裂、120Hz SDK 校准、CN 安装器升级/卸载支持、stock CN 回滚镜像。
 - **v1.0.0（2026-09-05）**：首个锁定 120Hz 发布（v6 DTBO + 速率映射 + 开机帧率修正）。
@@ -145,6 +148,8 @@ MIT License，见 [LICENSE](LICENSE)。仅供个人设备研究与自用；刷�
 > Other international baselines (bee2b067) are not included in this release.
 >
 > New users: read **[QUICKSTART.md](QUICKSTART.md)**. My full experiment log: **[pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md](pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md)**.
+>
+> **Source update (after v1.2.0, zip not rebuilt):** `service.sh` now coordinates with Pico3dResolution — every 30 s it clamps `sdk_eyebuffer` / `sdk_eyebufferX/Y` / `os_eyebuffer_*` back to 2160, and yields while V-Sleep is active or restoring. The DTBO images are not in the repo, so I did not rebuild the 120 Hz zip; a rebuild picks this up automatically.
 
 ### What I changed
 
@@ -240,6 +245,7 @@ If the fringing/haze is unacceptable, go back to stock 90 Hz; further blind pane
 - [QUALITY_120HZ_ANALYSIS.md](pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md) — my full quality/timing analysis
 - [RECOVERY.md](RECOVERY.md) — brick recovery and EDL
 - [HANDOVER-120HZ.md](HANDOVER-120HZ.md) — project handover and test checklist
+- v1.2.0+ source (zip not rebuilt): `service.sh` clamps `sdk_eyebuffer` / `sdk_eyebufferX/Y` / `os_eyebuffer_*` to 2160 every 30 s and yields to V-Sleep.
 - v1.2.0: Phoenix_ovs (b9666) support, CN/OVS auto-selection.
 - v1.1.0: eye buffer 2160, `xrMiniVsyncBackStep=4`, 120 Hz calibration, upgrade/uninstall.
 - v1.0.0: first locked-120 Hz release.
@@ -256,6 +262,8 @@ MIT License — see [LICENSE](LICENSE). For personal research only; back up and 
 > Другие международные базовые прошивки (bee2b067) в релиз не входят.
 >
 > Для быстрого старта: **[QUICKSTART.md](QUICKSTART.md)**. Мой полный журнал экспериментов: **[pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md](pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md)**.
+>
+> **Обновление исходников (после v1.2.0, zip не пересобран):** `service.sh` теперь согласуется с Pico3dResolution — каждые 30 с возвращает `sdk_eyebuffer` / `sdk_eyebufferX/Y` / `os_eyebuffer_*` к 2160 и уступает, пока V-Sleep активен или восстанавливается. Образы DTBO не входят в репозиторий, поэтому я не пересобирал zip; при пересборке это попадёт автоматически.
 
 ### Что я изменил
 
@@ -351,6 +359,7 @@ adb shell getprop sys.pvr.display.type
 - [QUALITY_120HZ_ANALYSIS.md](pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md) — мой полный анализ качества/таймингов
 - [RECOVERY.md](RECOVERY.md) — восстановление и EDL
 - [HANDOVER-120HZ.md](HANDOVER-120HZ.md) — передача проекта и чек-лист
+- v1.2.0+ исходники (zip не пересобран): `service.sh` каждые 30 с возвращает `sdk_eyebuffer` / `sdk_eyebufferX/Y` / `os_eyebuffer_*` к 2160 и уступает V-Sleep.
 - v1.2.0: поддержка Phoenix_ovs (b9666), авто-выбор CN/OVS.
 - v1.1.0: буфер глаза 2160, `xrMiniVsyncBackStep=4`, калибровка 120 Гц, обновление/удаление.
 - v1.0.0: первый релиз с фиксированными 120 Гц.
