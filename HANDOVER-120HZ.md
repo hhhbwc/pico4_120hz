@@ -4,9 +4,10 @@
 
 **最后整理**：2026-10-20
 
-> **2026-10-20 v1.1.0 发布更新**：v1.1.0 是当前发布版本，替代未单独发布的 v1.0.1。
-> 真机回归已完成：stock → v1.0.0 → v1.1.0 升级、stock 全新安装、uninstall → stock 恢复；
-> 当前设备已恢复官方 72Hz。本发布为 **CN / Phoenix 专用**，INTL/OVS 不在包内。
+> **2026-10-20 v1.2.0 发布更新**：v1.2.0 是当前发布版本，新增 **Phoenix_ovs（国际版 b9666）** 支持。
+> CN 真机回归已完成：stock → v1.1.0/v1.0.0 升级、stock 全新安装、uninstall → stock 恢复；
+> 当前设备已恢复官方 72Hz。OVS 120/stock 镜像已由官方 b9666 包构建并离线校验
+> （entry 6 补丁、面板子树与 CN v6 逐字节一致），但尚未在物理 OVS 机上做刷机回归。
 > 安装、升级、卸载和回滚见 [README.md](README.md) 与 [QUICKSTART.md](QUICKSTART.md)。
 
 ## 1. 当前结论
@@ -14,9 +15,11 @@
 当前已经确认可工作的方案是**锁定物理 120Hz**，不是稳定的 72/90/120Hz 实时三档切换。
 
 - v1.0.0：已发布，并完成过 Magisk 真机端到端验证。
-- v1.0.1：未单独发布；固件门、Phoenix_ovs、一次性 resync 等修复已并入 v1.1.0。
-- v1.1.0：当前发布版本。眼缓冲 2816→2160、`xrMiniVsyncBackStep=4`、120Hz SDK 校准、
-  CN 升级/卸载支持和 stock 回滚镜像已通过真机回归。
+- v1.0.1：未单独发布；固件门、一次性 resync 等修复已并入 v1.1.0。
+- v1.1.0：已发布。眼缓冲 2816→2160、`xrMiniVsyncBackStep=4`、120Hz SDK 校准、
+  CN 升级/卸载支持和 stock 回滚镜像已完成 CN 真机回归。
+- v1.2.0：当前发布版本。新增 CN + Phoenix_ovs 统一安装包，按 stock DTBO 自动选图；
+  CN 路径已完成真机回归，OVS 镜像离线校验通过、物理机回归待做。
 - 发布前最后一步：提交/推送并打 tag（见 §11）。
 - PICO OS 5.13.8 及后续 OTA 存在 root 和恢复能力风险，**不要点系统更新**。
 
@@ -105,15 +108,17 @@ SurfaceFlinger 的模式列表、PICO 属性或官方帧率显示都不能单独
 | 原厂 `libpxrhmdservice.so` | `c290a9f51214ff37b415c309c5facf80542024d40c22e5ae3cdeff9825a31fef` |
 | 补丁 `libpxrhmdservice.so`（v1.0.0） | `32427922a3c695453ec85a1c3c454bd984db95b55f0de095689cdd2f8af36eea` |
 | 补丁 `libpxrhmdservice.so`（v1.1.0，含 config-rate 120） | `8b4431d4c8f7ebec4bdead981800780347f376e10da10bdb90d6f2977187c829` |
-| v1.1.0 runtime `pxr_config.txt`（backstep 4） | `95937d0b24c83335d5d79bf782f67f2be8e760c789a40cd116b9fafc40f59125` |
+| runtime `pxr_config.txt`（backstep 4） | `95937d0b24c83335d5d79bf782f67f2be8e760c789a40cd116b9fafc40f59125` |
 | v1.1.0 ZIP（CN） | `3a7590ddcf12f1c03fed10a077dad206e23826073298c2888a431ad48836c9be` |
+| v1.2.0 ZIP（CN + Phoenix_ovs） | `f9b6f1df5495b8f1f31ab47cdb4543e5cbada6e6f4e0986a3ecfb7b25a1b3222` |
 | 已验证 v1.0.0 ZIP | `af0ce5db6496a416d8fb74b7c2d4c685f3364a185ee86252163f6ba669804b6a` |
 | v6 init120 DTBO（= v1.0.0 / v1.1.0 内置 120 镜像） | `f0c10d1dd04dd9a7c46b319758dbdd5f7540fe06aaf807377d23392c71aa20ea` |
 | 旧本地 v1.0.1 ZIP（历史，文件已不存在） | `ce38dc233fa1ccb9a10d545a37ad475dcc7005a9f4eac0ae38c9d357c870e401` |
 
 任何发布前重打包都要重新记录哈希，并确认产物对应干净提交。
-v1.1.0 为 **CN-only** 发布；INTL/Phoenix_ovs 构建不包含在本发布内。需要时从历史提交恢复
-`build_zip_ovs.py`，并补齐对应机型的 stock DTBO 转储后再生成 entry-6 镜像。
+v1.2.0 同时打包 CN 与 Phoenix_ovs：OVS stock 来自官方 b9666 包
+（`f4d6073c…`），entry-6 120 镜像由 `build_120_ovs.py` 生成（`d138d5d6…`）。
+其他 global 基线（`bee2b067…` / `0ab8b8…`）仍不在包内，安装器会安全 abort。
 
 ## 6. 设备与固件范围
 
@@ -158,7 +163,7 @@ v1.0.1 的固件门允许 `5.13.7*` 的多个增量，但这不等于支持所�
 
 ### 8.3 首次刷入后的画面分裂/花屏
 
-早期版本可能在面板和主机时序尚未同步时出现黑屏、水平分界线或下半屏花屏；电源键熄屏再亮会重跑面板初始化。v1.0.1 已改为一次性自动处理：安装器只在真正写入 dtbo 时放置 `screen_fix_once`，`service.sh` 在随后那次开机消费；该版本尚未完成新的真机回归，因此不能把自动修复写成已验证事实。
+早期版本可能在面板和主机时序尚未同步时出现黑屏、水平分界线或下半屏花屏；电源键熄屏再亮会重跑面板初始化。v1.1.0 起改为一次性自动处理：安装器只在真正写入 dtbo 时放置 `screen_fix_once`，`service.sh` 在随后那次开机消费；CN 路径已在 v1.1.0/v1.2.0 真机回归中验证。
 
 ## 9. 文件与脚本分类
 
@@ -167,7 +172,8 @@ v1.0.1 的固件门允许 `5.13.7*` 的多个增量，但这不等于支持所�
 ```text
 pico-refresh-selector/magisk-module/
 pico-refresh-selector/magisk-module/build_zip.py
-# 产物 pico4-display-analysis/pico4-120hz-v1.1.0.zip 不入库，按需构建
+pico4-display-analysis/build_120_ovs.py
+# 产物 pico4-display-analysis/pico4-120hz-v1.2.0.zip 不入库，按需构建
 ```
 
 ### 物理验证

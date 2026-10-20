@@ -5,13 +5,12 @@ Magisk's built-in extractor skips zip entries without Unix permission bits
 (python zipfile defaults external_attr to 0), so every entry here gets
 explicit 0644/0755 attributes.
 
-The patched vendor lib and META-INF live in the repository. Two 25 MB dtbo
-images are bundled — one built from the CN stock image, one from the global
-(INTL) stock image — because the two firmwares order the same sixteen dtbo
-entries differently and the bootloader selects by index. Both images
-patch every entry, so the installer only has to match the unit's stock hash,
-never its board index. The images stay out of git; build them with
-pico4-display-analysis/build_120_universal.py (hash verified here).
+The patched vendor lib and META-INF live in the repository. Four 25 MB dtbo
+images are bundled — CN and Phoenix_ovs (b9666) 120Hz/stock pairs — because
+the bootloader selects a different entry index on each variant and the
+installer selects the pair by the unit's stock hash. The images stay out of
+git; build them with build_120_init120_inplace.py / build_120_ovs.py (hashes
+are verified here and by the installer).
 """
 from __future__ import annotations
 
@@ -24,13 +23,17 @@ from pathlib import Path
 MODULE_SRC = Path(__file__).resolve().parent
 ANALYSIS = MODULE_SRC.parent.parent / "pico4-display-analysis"
 DTBO_CN = ANALYSIS / "dtbo-120hz-v6-init120.img"
-DTBO_STOCK = ANALYSIS / "recovery-edl" / "dtbo-stock-5.13.7.img"
+DTBO_OVS = ANALYSIS / "dtbo-120hz-v6-kona-mtp.img"
+DTBO_STOCK_CN = ANALYSIS / "recovery-edl" / "dtbo-stock-5.13.7.img"
+DTBO_STOCK_OVS = ANALYSIS / "dtbo-stock-phoenix_ovs.img"
 LIB = ANALYSIS / "libpxrhmdservice.patched.so"
-OUT = ANALYSIS / "pico4-120hz-v1.1.0.zip"
+OUT = ANALYSIS / "pico4-120hz-v1.2.0.zip"
 
 # must match the constants in customize.sh
 DTBO_CN_SHA256 = "f0c10d1dd04dd9a7c46b319758dbdd5f7540fe06aaf807377d23392c71aa20ea"
-DTBO_STOCK_SHA256 = "307e702182e731b76e8bc0a4aec131a53e1ddf82e96f2f416e2f49129e6d46ac"
+DTBO_OVS_SHA256 = "d138d5d68e64be3209b8d5024c7f10fd120dc3d2d83fd703a31fe09b3a6b5123"
+DTBO_STOCK_CN_SHA256 = "307e702182e731b76e8bc0a4aec131a53e1ddf82e96f2f416e2f49129e6d46ac"
+DTBO_STOCK_OVS_SHA256 = "f4d6073c669d81aa0a811ea4476f7a89d01bf8975a931d2b2548f237a2cda992"
 PATCHED_LIB_SHA256 = "8b4431d4c8f7ebec4bdead981800780347f376e10da10bdb90d6f2977187c829"
 
 
@@ -54,7 +57,9 @@ def main() -> int:
 
     for path, expected, label in (
         (args.dtbo_cn, DTBO_CN_SHA256, "CN 120Hz"),
-        (DTBO_STOCK, DTBO_STOCK_SHA256, "stock CN"),
+        (DTBO_OVS, DTBO_OVS_SHA256, "Phoenix_ovs 120Hz"),
+        (DTBO_STOCK_CN, DTBO_STOCK_CN_SHA256, "stock CN"),
+        (DTBO_STOCK_OVS, DTBO_STOCK_OVS_SHA256, "stock Phoenix_ovs"),
     ):
         path = path.resolve()
         if not path.is_file():
@@ -83,7 +88,9 @@ def main() -> int:
         add(zf, "uninstall.sh", MODULE_SRC / "uninstall.sh", 0o755)
         add(zf, "system/etc/pvr/pxr_config.txt", MODULE_SRC / "system/etc/pvr/pxr_config.txt", 0o644)
         add(zf, "dtbo-cn.img", args.dtbo_cn.resolve(), 0o644)
-        add(zf, "dtbo-stock.img", DTBO_STOCK.resolve(), 0o644)
+        add(zf, "dtbo-ovs.img", DTBO_OVS.resolve(), 0o644)
+        add(zf, "dtbo-stock-cn.img", DTBO_STOCK_CN.resolve(), 0o644)
+        add(zf, "dtbo-stock-ovs.img", DTBO_STOCK_OVS.resolve(), 0o644)
         add(zf, "system/lib64/libpxrhmdservice.so", LIB, 0o644)
         meta = MODULE_SRC / "META-INF" / "com" / "google" / "android"
         add(zf, "META-INF/com/google/android/update-binary", meta / "update-binary", 0o755)

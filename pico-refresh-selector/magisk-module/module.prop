@@ -1,6 +1,6 @@
 id=pico4_120hz
 name=Pico4 120Hz Display Unlock
-version=v1.1.0
-versionCode=3
+version=v1.2.0
+versionCode=4
 author=hhhbwc
-description=PICO 4 (Phoenix / SHARP5K) 120 Hz 解锁：120Hz DTBO + 速率映射 + 眼缓冲 2160 降压 + 晚锁存修复 + 120Hz SDK 校准。支持从 v1.0.0 升级；卸载时恢复原厂 DTBO 与配置。适用于 5.13.7 CN 固件。
+description=PICO 4 (Phoenix / SHARP5K) 120 Hz 解锁：120Hz DTBO + 速率映射 + 眼缓冲 2160 + 晚锁存修复 + 120Hz SDK 校准。支持 CN 与 Phoenix_ovs（国际版 b9666）；支持从 v1.0.0 升级；卸载恢复原厂 DTBO 与配置。

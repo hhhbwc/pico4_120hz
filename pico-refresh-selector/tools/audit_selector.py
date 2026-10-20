@@ -49,16 +49,20 @@ REQUIRED_CUSTOMIZE = (
     "c290a9f51214ff37b415c309c5facf80542024d40c22e5ae3cdeff9825a31fef",
     "PATCHED_LIB_SHA256=",  # accept the active overlay on upgrade/reinstall
     "STOCK_DTBO_CN=",  # CN (Phoenix) and global (Phoenix_ovs) order the same
-    "STOCK_DTBO_INTL=",  # sixteen entries differently; match on stock hash
+    "STOCK_DTBO_OVS=",  # sixteen entries differently; match on stock hash
+    "STOCK_DTBO_INTL=",
     "V6_DTBO_CN=",
+    "V6_DTBO_OVS=",
     "V6_DTBO_INTL=",
     "DTBO_ENTRY=",  # per-variant image, never a single dtbo.img
     "screen_fix_once",  # one-shot resync armed only when dtbo is flashed
     "Bundled libpxrhmdservice.so is corrupt",  # extracted overlay verified
     "PREV_LIB_SHA256=",  # v1.0.0 lib accepted on upgrade
     "uninstall.sh",  # stock restore runs from the module dir
-    "dtbo-stock.img",  # verified stock image for uninstall
-    "Bundled stock dtbo is corrupt",
+    "dtbo-stock-cn.img",  # verified per-variant stock images for uninstall
+    "dtbo-stock-ovs.img",
+    "dtbo-ovs.img",  # international Phoenix_ovs 120Hz image
+    "Bundled $STOCK_ENTRY is corrupt",  # error is explicit for either variant
     "sha256_file",
 )
 FORBIDDEN_CUSTOMIZE = (
@@ -78,8 +82,8 @@ REQUIRED_SERVICE = (
 
 REQUIRED_MODULE_PROP = (
     "id=pico4_120hz",
-    "versionCode=3",
-    "version=v1.1.0",
+    "versionCode=4",
+    "version=v1.2.0",
 )
 
 # Strings the running dex must carry (module identity + chosen-rate restore).
