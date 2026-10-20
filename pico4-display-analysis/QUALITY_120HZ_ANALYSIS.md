@@ -227,7 +227,7 @@ on-command / post-120 包流均可完整解析。
    再用 `F1 08` 恢复 stock 在 sleep-out 前的页状态。开机 120 Hz、`VIDEO_ENGINE=ON`、
    `entered rate:120`、无 DSI 错误。**目视结果：蓝紫描边与运动线条仍在，b0both 未解决。**
    同时做了运行期实验：把 HMD 服务写配置库的 `displayRefreshRate` 强制为 120（bind mount，
-   不改分区），让 SDK 使用 120 档 TimeWarp/曝光（6.5/2.3 ms）。用户主观认为运动线条
+   不改分区），让 SDK 使用 120 档 TimeWarp/曝光（6.5/2.3 ms）。我主观感觉运动线条
    “似乎变少了”，但蓝紫描边不变。
 5. `post120-e5d5`（`808f3c39…`）刷入：EDL 读回一致，开机 120 Hz 正常，但头显内出现
    **整屏白滤镜/发白**，而 `screencap` 抓图完全正常——再次证明面板侧发白/偏色不会进入
@@ -277,7 +277,7 @@ CN 与 INTL 固件的 16 个 entry **内容完全相同**（只是排列顺序�
 
 ## 6. 运行期修复：底部晚锁存撕裂（2026-10-20）
 
-用户补充的关键症状：**平视时面板最底边一直有线条，抬头后更严重**。这不是面板初始化问题，
+我补充的关键症状：**平视时面板最底边一直有线条，抬头后更严重**。这不是面板初始化问题，
 而是扫描/锁存时序：屏幕最后扫描的底部行在 GPU 饱和时拿到的是上一帧。头显内 30 s 实测：
 
 ```text
@@ -289,7 +289,7 @@ ATWGPU ~4.2ms, no DSI/underrun errors
 
 修复：把 `/system/etc/pvr/pxr_config.txt` 的 `xrMiniVsyncBackStep` 从 2 改为 4
 （bind mount + canary 同步 + kill `com.pico.xr.openxr_runtime` 重新加载）。
-生效证据：ATWGPU 升到 ~5.2ms、VsyncDelay 到 5；用户目视确认
+生效证据：ATWGPU 升到 ~5.2ms、VsyncDelay 到 5；我目视确认
 **“正常了，没有画面错误了”**。代价是约多 2 个 vsync（120Hz 下 ≈16.7ms）的延迟，
 下一步可试 3 找平衡。
 

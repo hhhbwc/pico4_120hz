@@ -1,7 +1,7 @@
 # PICO 4 120Hz 快速上手
 
-> 适用于 **PICO 4 CN（PICOA8110 / Phoenix）**、固件 **5.13.7**、面板 **SHARP5K**、已装 **Magisk**。
-> INTL/OVS 不在本发布内。刷机有风险，先读完“回滚”再动手。
+> 适用于 **PICO 4 CN（PICOA8110 / Phoenix）** 与 **Phoenix_ovs（国际版 b9666）**、固件 **5.13.7**、面板 **SHARP5K**、已装 **Magisk**。
+> 其他国际基线（bee2b067）不在本发布内。刷机有风险，先读完“回滚”再动手。
 
 ---
 
@@ -34,6 +34,7 @@ adb shell getprop ro.pvr.hmd.type       # SHARP5K
 安装器会自动：
 
 - 校验固件/面板/lib/DTBO；
+- 识别 **CN / Phoenix_ovs**，选择对应的 120 镜像和 stock 回滚镜像；
 - 备份原厂 DTBO 到 `/sdcard/Download/pico4-dtbo-stock-backup.img`；
 - 写入 120Hz DTBO 并读回校验；
 - 安装 120Hz 校准、眼缓冲 2160、底部锁存修复和卸载脚本。
@@ -66,9 +67,9 @@ adb shell getprop sys.pvr.display.type
 
 ## 5. 从 v1.0.0 升级
 
-**不需要先卸载。** 直接把 v1.1.0 zip 在 Magisk 里覆盖安装，然后重启：
+**不需要先卸载。** 直接把 v1.2.0 zip 在 Magisk 里覆盖安装，然后重启：
 
-- 安装器识别 v1.0.0 的旧 lib/DTBO，不会重刷分区；
+- 安装器识别 v1.0.0/v1.1.0 的旧 lib/DTBO，不会重刷分区；
 - 新的 120Hz 校准、眼缓冲 2160、`xrMiniVsyncBackStep=4` 会生效；
 - 原厂 DTBO 备份保留，之后仍可卸载回官方。
 
@@ -78,7 +79,7 @@ adb shell getprop sys.pvr.display.type
 
 1. Magisk App → **模块** → 移除 `Pico4 120Hz Display Unlock`。
 2. 重启。
-3. 卸载脚本会恢复原厂 DTBO、配置和 props，并清理 canary 配置。
+3. 卸载脚本会按安装时选择的变体恢复原厂 DTBO（CN / Phoenix_ovs）、配置和 props，并清理 canary 配置。
 4. 重启后应回到官方 72Hz（设置里仍可选 90Hz）。
 
 如果卸载后仍停在 120Hz，检查模块是否真的移除、是否重启过；必要时用 EDL 刷回 stock。
@@ -119,7 +120,8 @@ adb shell getprop sys.pvr.display.type
 - **轻微整体发白**：120Hz 下 90Hz gamma/VCOM 的基线代价，比早期错误 E5/D5 的白滤镜轻很多。
 - 不保证所有应用跑满 120fps；重负载场景由 GPU 决定。
 - 锁定 120Hz，不做实时刷新率切换。
-- 本发布仅 CN；INTL/OVS 请勿安装。
+- 其他国际基线（bee2b067）不支持；CN 与 Phoenix_ovs（b9666）已打包。
+- Phoenix_ovs 镜像已完成离线校验（entry 6 + 面板子树），但尚未在物理 OVS 机上做刷机回归；首次 OVS 安装请保留 stock 备份。
 
 如果蓝边/发雾无法接受，建议回官方 90Hz。
 

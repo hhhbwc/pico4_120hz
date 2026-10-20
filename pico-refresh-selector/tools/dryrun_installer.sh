@@ -45,13 +45,15 @@ hash_of() {
         | sed -nE "s|^${key}=\"([0-9a-f]+)\"$|\\1|p" | head -1
 }
 STOCK_CN=$(hash_of STOCK_DTBO_CN)
+STOCK_OVS=$(hash_of STOCK_DTBO_OVS)
 STOCK_INTL=$(hash_of STOCK_DTBO_INTL)
 V6_CN=$(hash_of V6_DTBO_CN)
+V6_OVS=$(hash_of V6_DTBO_OVS)
 V6_INTL=$(hash_of V6_DTBO_INTL)
 BASE_LIB=$(hash_of BASE_LIB_SHA256)
 PATCHED_LIB=$(hash_of PATCHED_LIB_SHA256)
 PREV_LIB=$(hash_of PREV_LIB_SHA256)
-for v in STOCK_CN STOCK_INTL V6_CN V6_INTL BASE_LIB PATCHED_LIB PREV_LIB; do
+for v in STOCK_CN STOCK_OVS STOCK_INTL V6_CN V6_OVS V6_INTL BASE_LIB PATCHED_LIB PREV_LIB; do
     if [ -z "${!v}" ]; then
         echo "failed to extract a hash from customize.sh ($v)" >&2
         exit 1
@@ -161,6 +163,7 @@ reset_scenario() {
     SCEN_INCREMENTAL=smartcm.1761818300
     SCEN_PANEL=SHARP5K
     SCEN_DTBO_HASH="$STOCK_CN"
+    SCEN_STOCK_HASH="$STOCK_CN"
     SCEN_LIB_HASH="$BASE_LIB"
     SCEN_DTBO_BLOCK=1
     SCEN_DD_FAIL=""
@@ -229,7 +232,7 @@ fixture_hash() {
     # $SCEN_LIB_HASH describes the system lib the installer checks first.
     if [ -n "${MODPATH:-}" ]; then
         case "$1" in
-            "$MODPATH"/dtbo-stock.img) echo "$STOCK_CN"; return 0 ;;
+            "$MODPATH"/dtbo-stock.img) echo "$SCEN_STOCK_HASH"; return 0 ;;
             "$MODPATH"/*)
                 if [ "$SCEN_BAD_MODULE_LIB" = "1" ]; then
                     echo "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
@@ -243,6 +246,9 @@ fixture_hash() {
     case "$base" in
         *dtbo-stock-backup.img) echo "$BACKUP_HASH" ;;
         dtbo-cn.img*)           if [ "$SCEN_BAD_ZIP" = 1 ]; then echo "0000000000000000000000000000000000000000000000000000000000000000"; else echo "$V6_CN"; fi ;;
+        dtbo-ovs.img*)          if [ "$SCEN_BAD_ZIP" = 1 ]; then echo "0000000000000000000000000000000000000000000000000000000000000000"; else echo "$V6_OVS"; fi ;;
+        dtbo-stock-cn.img*)     echo "$STOCK_CN" ;;
+        dtbo-stock-ovs.img*)    echo "$STOCK_OVS" ;;
         dtbo-intl.img*)         if [ "$SCEN_BAD_ZIP" = 1 ]; then echo "0000000000000000000000000000000000000000000000000000000000000000"; else echo "$V6_INTL"; fi ;;
         *libpxrhmdservice.so*)  echo "$SCEN_LIB_HASH" ;;
         dtbo*)                  echo "$SCEN_DTBO_HASH" ;;
@@ -307,6 +313,12 @@ dd() {
             record "cn" flashes
             return 0
             ;;
+        dtbo-ovs.img*)
+            if [ "$SCEN_DD_FAIL" = "flash" ]; then return 1; fi
+            SCEN_DTBO_HASH="$V6_OVS"
+            record "ovs" flashes
+            return 0
+            ;;
         dtbo-intl.img*)
             if [ "$SCEN_DD_FAIL" = "flash" ]; then return 1; fi
             SCEN_DTBO_HASH="$V6_INTL"
@@ -342,16 +354,15 @@ unzip() {
             : > "$MODPATH/service.sh"
             : > "$MODPATH/post-fs-data.sh"
             : > "$MODPATH/uninstall.sh"
-            : > "$MODPATH/dtbo-stock.img"
             : > "$MODPATH/system/lib64/libpxrhmdservice.so"
             ;;
-        dtbo-*)
+        *dtbo-*)
             # The installer hashes $TMPDIR/<entry> before flashing, so the
             # extracted image has to exist under the name it asked for.
             local e
             for e in "${entries[@]}"; do
                 case "${e##*/}" in
-                    dtbo-cn.img|dtbo-intl.img)
+                    dtbo-cn.img|dtbo-ovs.img|dtbo-stock-cn.img|dtbo-stock-ovs.img|dtbo-intl.img)
                         mkdir -p "$TMPDIR"
                         : > "$TMPDIR/${e##*/}"
                         ;;
@@ -515,25 +526,37 @@ assert_abort "rejects wrong panel"
 
 banner "installer: dtbo baseline selection"
 # ----------------------------------------------------------------------------
-reset_scenario; SCEN_DTBO_HASH="$STOCK_CN"; run_installer
+reset_scenario; SCEN_DTBO_HASH="$STOCK_CN"; SCEN_STOCK_HASH="$STOCK_CN"; run_installer
 assert_no_abort "CN stock accepted"
 check "CN writes the partition once" "$([ "$(flashes)" = 1 ] && echo 1 || echo 0)" "writes=$(flashes)"
 check "CN backs the stock image up before writing" "$([ -n "$(backups)" ] && echo 1 || echo 0)"
 check "CN arms the one-shot resync" "$(resync_armed)"
 check "CN variant announced" "$(ui_says 'CN / Phoenix')"
 
-reset_scenario; SCEN_DTBO_HASH="$STOCK_INTL"; run_installer
-assert_abort "INTL stock is rejected by the CN-only release"
-case "$ABORT_MSG" in *"CN"*) check "INTL rejection names the CN-only scope" 1 ;; *) check "INTL rejection names the CN-only scope" 0 "$ABORT_MSG" ;; esac
+reset_scenario; SCEN_DTBO_HASH="$STOCK_OVS"; SCEN_STOCK_HASH="$STOCK_OVS"; run_installer
+assert_no_abort "Phoenix_ovs stock accepted"
+check "OVS writes the partition once" "$([ "$(flashes)" = 1 ] && echo 1 || echo 0)" "writes=$(flashes)"
+check "OVS backs the stock image up before writing" "$([ -n "$(backups)" ] && echo 1 || echo 0)"
+check "OVS arms the one-shot resync" "$(resync_armed)"
+check "OVS variant announced" "$(ui_says 'global / Phoenix_ovs')"
 
-reset_scenario; SCEN_DTBO_HASH="$V6_CN"; run_installer
+reset_scenario; SCEN_DTBO_HASH="$STOCK_INTL"; run_installer
+assert_abort "other global (bee2b067) stock is rejected"
+case "$ABORT_MSG" in *"Unsupported global"*) check "other-global rejection is explicit" 1 ;; *) check "other-global rejection is explicit" 0 "$ABORT_MSG" ;; esac
+
+reset_scenario; SCEN_DTBO_HASH="$V6_CN"; SCEN_STOCK_HASH="$STOCK_CN"; run_installer
 assert_no_abort "already-flashed CN reinstalls without flashing"
 check "reinstall does not rewrite dtbo" "$([ "$(flashes)" = 0 ] && echo 1 || echo 0)" "writes=$(flashes)"
 check "reinstall does not arm resync" "$([ "$(resync_armed)" = 0 ] && echo 1 || echo 0)"
 
+reset_scenario; SCEN_DTBO_HASH="$V6_OVS"; SCEN_STOCK_HASH="$STOCK_OVS"; run_installer
+assert_no_abort "already-flashed OVS reinstalls without flashing"
+check "OVS reinstall does not rewrite dtbo" "$([ "$(flashes)" = 0 ] && echo 1 || echo 0)"
+check "OVS reinstall does not arm resync" "$([ "$(resync_armed)" = 0 ] && echo 1 || echo 0)"
+
 reset_scenario; SCEN_DTBO_HASH="$V6_INTL"; run_installer
-assert_no_abort "already-flashed INTL reinstalls without flashing"
-check "INTL reinstall does not rewrite dtbo" "$([ "$(flashes)" = 0 ] && echo 1 || echo 0)"
+assert_abort "other global 120Hz image (0ab8b8) is rejected"
+case "$ABORT_MSG" in *"Unsupported global"*) check "other-global 120Hz rejection is explicit" 1 ;; *) check "other-global 120Hz rejection is explicit" 0 "$ABORT_MSG" ;; esac
 
 reset_scenario; SCEN_DTBO_HASH="deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"; run_installer
 assert_abort "rejects an unknown dtbo baseline"
@@ -586,7 +609,7 @@ banner "installer: hash consistency between installer and packager"
 # it bundles. If one copy of a hash is edited without the other, the installer
 # ships a zip that aborts on device. Both V6 hashes and the patched lib must
 # therefore appear in both files, byte for byte.
-for pair in "V6_DTBO_CN:$V6_CN" "PATCHED_LIB:$PATCHED_LIB"; do
+for pair in "V6_DTBO_CN:$V6_CN" "V6_DTBO_OVS:$V6_OVS" "PATCHED_LIB:$PATCHED_LIB"; do
     name=${pair%%:*}
     hash=${pair#*:}
     in_install=$(grep -c "$hash" "$CUSTOMIZE" || true)
@@ -595,13 +618,17 @@ for pair in "V6_DTBO_CN:$V6_CN" "PATCHED_LIB:$PATCHED_LIB"; do
           "$([ "$in_install" -ge 1 ] && [ "$in_pack" -ge 1 ] && echo 1 || echo 0)" \
           "customize=$in_install build_zip=$in_pack"
 done
-check "STOCK_DTBO_CN hash bundled by build_zip.py" \
-      "$([ "$(grep -c "$STOCK_CN" "$MODULE_SRC/build_zip.py" || true)" -ge 1 ] && echo 1 || echo 0)"
+for pair in "STOCK_DTBO_CN:$STOCK_CN" "STOCK_DTBO_OVS:$STOCK_OVS"; do
+    name=${pair%%:*}
+    hash=${pair#*:}
+    check "$name hash bundled by build_zip.py" \
+          "$([ "$(grep -c "$hash" "$MODULE_SRC/build_zip.py" || true)" -ge 1 ] && echo 1 || echo 0)"
+done
 check "PREV_LIB_SHA256 declared in customize.sh" \
       "$([ "$(grep -c "$PREV_LIB" "$CUSTOMIZE" || true)" -ge 1 ] && echo 1 || echo 0)"
 # The stock baselines are only ever compared against, never bundled, so they
-# belong in customize.sh. Both variants must be present for the gate logic.
-for pair in "STOCK_DTBO_CN:$STOCK_CN" "STOCK_DTBO_INTL:$STOCK_INTL"; do
+# belong in customize.sh. All supported variants must be present for the gate.
+for pair in "STOCK_DTBO_CN:$STOCK_CN" "STOCK_DTBO_OVS:$STOCK_OVS" "STOCK_DTBO_INTL:$STOCK_INTL"; do
     name=${pair%%:*}
     hash=${pair#*:}
     check "$name declared once in customize.sh" \

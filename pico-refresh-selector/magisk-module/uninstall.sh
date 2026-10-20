@@ -12,6 +12,7 @@
 MODDIR=${MODDIR:-${0%/*}}
 DTBO_PART=/dev/block/by-name/dtbo
 STOCK_DTBO_CN="307e702182e731b76e8bc0a4aec131a53e1ddf82e96f2f416e2f49129e6d46ac"
+STOCK_DTBO_OVS="f4d6073c669d81aa0a811ea4476f7a89d01bf8975a931d2b2548f237a2cda992"
 BUNDLED_STOCK="$MODDIR/dtbo-stock.img"
 BACKUP_STOCK="/sdcard/Download/pico4-dtbo-stock-backup.img"
 CLEANUP="/data/adb/service.d/pico4_120hz_cleanup.sh"
@@ -26,10 +27,14 @@ current=""
 [ -b "$DTBO_PART" ] && current=$(sha256_file "$DTBO_PART")
 
 restore_from=""
-if [ "$current" != "$STOCK_DTBO_CN" ]; then
+if [ "$current" != "$STOCK_DTBO_CN" ] && [ "$current" != "$STOCK_DTBO_OVS" ]; then
     for candidate in "$BUNDLED_STOCK" "$BACKUP_STOCK"; do
         [ -f "$candidate" ] || continue
-        [ "$(sha256_file "$candidate")" = "$STOCK_DTBO_CN" ] || continue
+        candidate_hash=$(sha256_file "$candidate")
+        case "$candidate_hash" in
+            "$STOCK_DTBO_CN"|"$STOCK_DTBO_OVS") ;;
+            *) continue ;;
+        esac
         restore_from="$candidate"
         break
     done
@@ -37,7 +42,7 @@ if [ "$current" != "$STOCK_DTBO_CN" ]; then
         dd if="$restore_from" of="$DTBO_PART" bs=4096 >/dev/null 2>&1
         sync
         written=$(sha256_file "$DTBO_PART")
-        if [ "$written" = "$STOCK_DTBO_CN" ]; then
+        if [ "$written" = "$STOCK_DTBO_CN" ] || [ "$written" = "$STOCK_DTBO_OVS" ]; then
             log -t pico4_120hz "uninstall: stock dtbo restored from $restore_from"
         else
             log -t pico4_120hz "uninstall: dtbo write verification failed ($written)"

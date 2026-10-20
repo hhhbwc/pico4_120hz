@@ -7,7 +7,7 @@ POSTFSDATA=true
 LATESTARTSERVICE=true
 
 ui_print "======================================"
-ui_print "  Pico4 120Hz Display Unlock v1.1.0"
+ui_print "  Pico4 120Hz Display Unlock v1.2.0"
 ui_print "======================================"
 
 # Firmware gate, component-wise. 5.13.7 ships under several device-tree
@@ -52,9 +52,13 @@ DTBO_PART="/dev/block/by-name/dtbo"
 # Both images patch every entry, so the module never needs to know which
 # entry a given unit actually boots.
 STOCK_DTBO_CN="307e702182e731b76e8bc0a4aec131a53e1ddf82e96f2f416e2f49129e6d46ac"
+STOCK_DTBO_OVS="f4d6073c669d81aa0a811ea4476f7a89d01bf8975a931d2b2548f237a2cda992"
 STOCK_DTBO_INTL="bee2b0676e04d93135c660f1c80157afd06e52678432ea2db9f9c90b47007d9e"
 # v1.1.0 CN bundle: the v6 init120 image from the v1.0.0 release.
 V6_DTBO_CN="f0c10d1dd04dd9a7c46b319758dbdd5f7540fe06aaf807377d23392c71aa20ea"
+# International Phoenix_ovs image: entry 6 patched in place from the b9666
+# stock dtbo (f4d6073c). Panel subtree is byte-identical to the CN v6.
+V6_DTBO_OVS="d138d5d68e64be3209b8d5024c7f10fd120dc3d2d83fd703a31fe09b3a6b5123"
 # Pre-1.1 universal / vfp14 images, accepted on upgrade/reinstall without
 # rewriting the partition.
 V6_DTBO_UNIVERSAL_CN="a57573ae89a26bc37db10d8b258a25f2cf343b042246519144ff3213508ff385"
@@ -82,7 +86,7 @@ fi
 
 # Extract module files manually: Magisk's built-in extractor skips zip
 # entries without Unix permission bits.
-unzip -o "$ZIPFILE" "module.prop" "service.sh" "post-fs-data.sh" "uninstall.sh" "dtbo-stock.img" "system/*" -d "$MODPATH" >/dev/null 2>&1     || abort "Failed to extract module files"
+unzip -o "$ZIPFILE" "module.prop" "service.sh" "post-fs-data.sh" "uninstall.sh" "system/*" -d "$MODPATH" >/dev/null 2>&1     || abort "Failed to extract module files"
 set_perm_recursive "$MODPATH" 0 0 0755 0644
 set_perm "$MODPATH/service.sh" 0 0 0755
 set_perm "$MODPATH/post-fs-data.sh" 0 0 0755
@@ -90,11 +94,8 @@ set_perm "$MODPATH/uninstall.sh" 0 0 0755
 [ -f "$MODPATH/system/lib64/libpxrhmdservice.so" ] || abort "libpxrhmdservice.so missing after extraction"
 [ -f "$MODPATH/service.sh" ] || abort "service.sh missing after extraction"
 [ -f "$MODPATH/uninstall.sh" ] || abort "uninstall.sh missing after extraction"
-[ -f "$MODPATH/dtbo-stock.img" ] || abort "dtbo-stock.img missing after extraction"
 module_lib_hash=$(sha256_file "$MODPATH/system/lib64/libpxrhmdservice.so") || abort "Unable to hash extracted libpxrhmdservice.so"
 [ "$module_lib_hash" = "$PATCHED_LIB_SHA256" ] || abort "Bundled libpxrhmdservice.so is corrupt (expected $PATCHED_LIB_SHA256, got $module_lib_hash)"
-stock_img_hash=$(sha256_file "$MODPATH/dtbo-stock.img") || abort "Unable to hash bundled stock dtbo"
-[ "$stock_img_hash" = "$STOCK_DTBO_CN" ] || abort "Bundled stock dtbo is corrupt (expected $STOCK_DTBO_CN, got $stock_img_hash)"
 
 current_dtbo=$(sha256_file "$DTBO_PART") || abort "Unable to hash dtbo partition"
 
@@ -105,25 +106,45 @@ current_dtbo=$(sha256_file "$DTBO_PART") || abort "Unable to hash dtbo partition
 # stock path and the module installed the overlay lib without ever writing the
 # dtbo. Found by pico-refresh-selector/tools/dryrun_installer.sh.
 NEED_FLASH=0
+STOCK_ENTRY=""
+STOCK_TARGET=""
 case "$current_dtbo" in
     "$STOCK_DTBO_CN")
-        DTBO_ENTRY="dtbo-cn.img"; DTBO_TARGET="$V6_DTBO_CN"; VARIANT="CN / Phoenix"
-        NEED_FLASH=1
+        DTBO_ENTRY="dtbo-cn.img"; DTBO_TARGET="$V6_DTBO_CN"
+        STOCK_ENTRY="dtbo-stock-cn.img"; STOCK_TARGET="$STOCK_DTBO_CN"
+        VARIANT="CN / Phoenix"; NEED_FLASH=1
         ;;
-    "$STOCK_DTBO_INTL")
-        abort "This release bundles the CN (Phoenix) dtbo only; the INTL/OVS image is not included. Use the CN release on CN units, or build the INTL image from your stock dtbo."
+    "$STOCK_DTBO_OVS")
+        DTBO_ENTRY="dtbo-ovs.img"; DTBO_TARGET="$V6_DTBO_OVS"
+        STOCK_ENTRY="dtbo-stock-ovs.img"; STOCK_TARGET="$STOCK_DTBO_OVS"
+        VARIANT="global / Phoenix_ovs"; NEED_FLASH=1
         ;;
-    "$V6_DTBO_CN"|"$V6_DTBO_UNIVERSAL_CN"|"$V6_DTBO_INTL"|"$V6_DTBO_VFP14")
-        ui_print "- 120Hz dtbo already flashed, skipping partition write"
-        NEED_FLASH=0
+    "$V6_DTBO_CN"|"$V6_DTBO_UNIVERSAL_CN"|"$V6_DTBO_VFP14")
+        STOCK_ENTRY="dtbo-stock-cn.img"; STOCK_TARGET="$STOCK_DTBO_CN"
+        VARIANT="CN / Phoenix"; NEED_FLASH=0
+        ;;
+    "$V6_DTBO_OVS")
+        STOCK_ENTRY="dtbo-stock-ovs.img"; STOCK_TARGET="$STOCK_DTBO_OVS"
+        VARIANT="global / Phoenix_ovs"; NEED_FLASH=0
+        ;;
+    "$STOCK_DTBO_INTL"|"$V6_DTBO_INTL")
+        abort "Unsupported global dtbo baseline ($current_dtbo). This release bundles CN and Phoenix_ovs (b9666) images only."
         ;;
     *)
         abort "Unknown dtbo baseline: $current_dtbo (wrong firmware or already modified; post this hash to issue #2)"
         ;;
 esac
 
+ui_print "- Detected: $VARIANT"
+ui_print "- Staging stock image ($STOCK_ENTRY)"
+unzip -o "$ZIPFILE" "$STOCK_ENTRY" -d "$TMPDIR" >/dev/null 2>&1 || abort "Failed to extract $STOCK_ENTRY"
+stock_src="$TMPDIR/$STOCK_ENTRY"
+stock_img_hash=$(sha256_file "$stock_src") || abort "Unable to hash bundled $STOCK_ENTRY"
+[ "$stock_img_hash" = "$STOCK_TARGET" ] || abort "Bundled $STOCK_ENTRY is corrupt (expected $STOCK_TARGET, got $stock_img_hash)"
+cp "$stock_src" "$MODPATH/dtbo-stock.img" || abort "Failed to stage the stock dtbo"
+chmod 644 "$MODPATH/dtbo-stock.img"
+
 if [ "$NEED_FLASH" = "1" ]; then
-    ui_print "- Detected: $VARIANT"
     ui_print "- Stock dtbo detected, backing up"
     BACKUP="/sdcard/Download/pico4-dtbo-stock-backup.img"
     dd if="$DTBO_PART" of="$BACKUP" bs=4096 >/dev/null 2>&1 || abort "dtbo backup failed"
@@ -154,6 +175,7 @@ fi
 
 ui_print "- Installing vendor config-map patch"
 ui_print "- Installing boot-time rate fix + panel resync"
+ui_print " Supported: CN (Phoenix) + Phoenix_ovs"
 ui_print "======================================"
 ui_print " Reboot to apply. Panel runs 120Hz."
 ui_print " A screen blink seconds after boot is"

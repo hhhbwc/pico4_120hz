@@ -1,81 +1,75 @@
 # PICO 4 120Hz Display Unlock
 
-PICO 4（PICOA8110 / Phoenix，SHARP5K 4.93" 面板）的 **锁定 120Hz** Magisk 模块。它把面板时序、HMD 服务速率映射、120Hz SDK 校准、眼缓冲和底部锁存时序一起改到位，避免只改 DTBO 带来的花屏、卡顿和错误线条。
-
-> **当前发布：v1.1.0（2026-10-20）**
-> 仅支持 **CN 5.13.7 + SHARP5K + Magisk**。INTL/OVS 镜像不在本发布内。
->
-> 新手请直接看 **[QUICKSTART.md](QUICKSTART.md)**。深度原理与实验记录在 **[pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md](pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md)**。
+[中文](#中文) · [English](#english) · [Русский](#русский)
 
 ---
 
-## 这个模块做什么
+## 中文
 
-| 项目 | 内容 |
+> **当前发布：v1.2.0（2026-10-20）**
+> 我把 PICO 4（PICOA8110 / Phoenix，SHARP5K 4.93"）的面板锁定在 120Hz，并配套改了 HMD 服务、SDK 校准、眼缓冲和底部锁存时序。
+> 支持 **CN（Phoenix）与 Phoenix_ovs（国际版 b9666）**、固件 **5.13.7**、Magisk。
+> 其他国际基线（bee2b067）不在本发布内。
+>
+> 新手直接看 **[QUICKSTART.md](QUICKSTART.md)**；我的完整实验记录在 **[pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md](pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md)**。
+
+### 我做了什么
+
+| 项目 | 我的改动 |
 | --- | --- |
 | 面板 | 把原厂 90Hz DTBO 改成 120Hz 时序（locked 120，不做实时多档切换） |
 | HMD 服务 | 补丁 `libpxrhmdservice.so`：所有速率请求落到 120 配置，并把 SDK 的 `displayRefreshRate` 固定为 120 |
-| SDK 校准 | 使用 120Hz 的 TimeWarp wait bias 0/0、曝光 6.5/2.3ms（而不是 72Hz 的 20.13/6.78ms） |
+| SDK 校准 | 使用 120Hz 的 TimeWarp wait bias 0/0、曝光 6.5/2.3ms，而不是 72Hz 的 20.13/6.78ms |
 | 眼缓冲 | 把 PICO 默认的每眼 2816×2816 超采样降到面板原生 2160×2160，给 ATW 留 GPU 余量 |
 | 锁存时序 | `xrMiniVsyncBackStep=4`，消除面板最底边的晚锁存/扫描撕裂线条 |
 | 首次刷入 | 安装器备份原厂 DTBO、写入 120 DTBO、读回校验，并在首次开机做一次面板时序重同步 |
-| 升级 | 支持从 v1.0.0 直接覆盖安装 |
-| 卸载 | `uninstall.sh` 恢复原厂 DTBO、清理 canary 配置、恢复 ConfigurationService 与 props |
+| 升级 | 支持从 v1.0.0 / v1.1.0 直接覆盖安装 |
+| 卸载 | `uninstall.sh` 恢复对应变体的原厂 DTBO、清理 canary 配置、恢复 ConfigurationService 与 props |
 
-**实测（v1.1.0，离头/桌面场景）**：`FrmGpu` 中位约 **13–15ms**，引擎约 **65–73fps**，`VsyncDelay` 2–3；v1.0.0 同场景约 27–30ms / 30fps。
+**我的实测（v1.2.0，离头/桌面场景）**：`FrmGpu` 中位约 **13–15ms**，引擎约 **65–73fps**，`VsyncDelay` 2–3；v1.0.0 同场景约 27–30ms / 30fps。
 
----
-
-## 支持范围
+### 支持范围
 
 - **设备**：PICO 4 `PICOA8110`（Phoenix），面板 `ro.pvr.hmd.type=SHARP5K`。
 - **固件**：`ro.build.id` 为 `5.13.7*`（安装器会校验）。
 - **Root**：Magisk（模块安装、DTBO 写入、props 设置都需要 root）。
-- **区域**：本发布仅内置 **CN（Phoenix）** 的 120 DTBO 和 stock CN 回滚镜像；INTL/OVS 请勿安装。
-- **刷新率架构**：锁定 120Hz。任何实时 DFPS 切换（离开 120）仍会黑屏，本模块刻意禁止。
+- **区域**：CN（Phoenix）与 Phoenix_ovs（国际版 b9666）。安装器按当前 stock DTBO 哈希自动选择对应的 120/stock 镜像；其他国际基线（bee2b067）请勿安装。
+- **刷新率架构**：锁定 120Hz。任何实时 DFPS 切换（离开 120）仍会黑屏，我的模块刻意禁止。
 
----
+### 安装 / 升级 / 卸载
 
-## 安装 / 升级 / 卸载
+**安装（官方状态）**
 
-### 安装（官方状态）
-
-1. 下载 Release 里的 `pico4-120hz-v1.1.0.zip`。
+1. 下载 Release 里的 `pico4-120hz-v1.2.0.zip`。
 2. Magisk App → **模块** → **从本地安装** → 选择 zip。
-3. 重启。首次开机后屏幕可能闪一下——这是安装器安排的一次性面板时序重同步，正常。
+3. 重启。首次开机后屏幕可能闪一下——这是我安排的一次性面板时序重同步，正常。
 4. 进入系统后确认面板 120Hz（见下方“验证”）。
 
-安装器会自动：
+我的安装器会自动：
 - 校验固件/面板/lib/DTBO 基线；
+- 识别 **CN / Phoenix_ovs** 并选择对应的 120 镜像与 stock 回滚镜像；
 - 把原厂 DTBO 备份到 `/sdcard/Download/pico4-dtbo-stock-backup.img`；
 - 写入 120 DTBO 并读回校验；
 - 安装补丁 lib、120 配置、眼缓冲/锁存修复和卸载脚本。
 
-### 从 v1.0.0 升级
+**从 v1.0.0 / v1.1.0 升级**
 
-直接把 v1.1.0 zip 覆盖安装即可，不需要先卸载：
+直接把 v1.2.0 zip 覆盖安装即可，不需要先卸载：
 
-- 安装器接受 v1.0.0 的旧 lib（`32427922…`）和旧 DTBO（`f0c10d1d…`），不会重刷分区；
+- 安装器接受旧 lib（`32427922…`）和旧 DTBO（`f0c10d1d…`），不会重刷分区；
 - 新补丁 lib、`xrMiniVsyncBackStep=4`、眼缓冲 2160 和 120 校准会在重启后生效；
 - 原厂 DTBO 备份保留，卸载仍可回官方。
 
-### 卸载 / 回官方
+**卸载 / 回官方**
 
 1. Magisk App → **模块** → 移除 `Pico4 120Hz Display Unlock`。
 2. 重启。
-3. 卸载脚本会：
-   - 用模块内置的 stock CN 镜像（或安装时的备份）恢复 DTBO；
-   - 重置 `sdk_refreshRate` / `sdk_Recommand_refreshRate` / `displayRefreshRate` / 眼缓冲 / `persist.pvr.display.type`；
-   - 删除 `/data/misc/pxr/canary/config/pxr_config.txt` 和 `/sdcard/psmart/canary/pxr_config.txt`；
-   - 在 `/data/adb/service.d/` 放一个一次性清理脚本，确保重启后配置也恢复。
+3. 卸载脚本会用模块内置的对应变体 stock 镜像（CN `307e7021…` / OVS `f4d6073c…`，或安装时的备份）恢复 DTBO，重置 `sdk_refreshRate` / `sdk_Recommand_refreshRate` / `displayRefreshRate` / 眼缓冲 / `persist.pvr.display.type`，删除 canary 配置，并在 `/data/adb/service.d/` 放一个一次性清理脚本。
+4. 重启后应回到官方 72Hz（系统设置里仍可选 90Hz）。
 
-重启后应回到官方 72Hz（系统设置里仍可选 90Hz）。
+> 如果 `/sdcard/Download/pico4-dtbo-stock-backup.img` 丢失，模块内的 `dtbo-stock.img` 仍是可验证的对应变体原厂镜像；两者都缺失时用 EDL 读 `dtbobak` 或官方固件回滚（见下）。
 
-> 如果 `/sdcard/Download/pico4-dtbo-stock-backup.img` 丢失，模块内的 `dtbo-stock.img` 仍是可验证的 CN 原厂镜像；两者都缺失时用 EDL 读 `dtbobak` 或官方固件回滚（见下）。
-
----
-
-## 验证 120Hz
+### 验证 120Hz
 
 ```bash
 adb shell dumpsys SurfaceFlinger | grep -m1 refresh-rate
@@ -91,76 +85,274 @@ adb shell getprop sys.pvr.display.type
 如果仍是 72Hz：
 
 - 确认模块已启用并重启过；
-- 确认固件是 5.13.7 CN、面板 SHARP5K；
+- 确认固件是 5.13.7、面板 SHARP5K；
 - 查看 Magisk 安装日志/`logcat` 里是否有 `pico4_120hz` 的 abort；
 - 确认没有其他模块同时修改 `dtbo` 或 `libpxrhmdservice.so`。
 
----
+### 已知限制（重要）
 
-## 已知限制（重要）
-
-1. **2D 应用边缘的蓝紫描边仍在**。这是面板在 120Hz 下的模拟/充电标定极限，`screencap` 抓图是干净的；所有 DTBO 候选（`b0both`、`panel-b0`、`vfp14`、`e5d5`）和色差校正开关都改变不了它。
+1. **2D 应用边缘的蓝紫描边仍在**。这是面板在 120Hz 下的模拟/充电标定极限，`screencap` 抓图是干净的；我试过的所有 DTBO 候选（`b0both`、`panel-b0`、`vfp14`、`e5d5`）和色差校正开关都改变不了它。
 2. **整体画面有轻微发白/发雾**。这是 90Hz gamma/VCOM 标定被推到 120Hz 的基线代价；比早期 `e5d5` 候选的严重白滤镜轻得多（那个是错误写入 E5/D5 导致的，已排除）。
-3. **不保证所有应用都跑满 120fps**。面板扫描是 120Hz，应用渲染由 GPU 决定；本模块通过把眼缓冲降到 2160 大幅改善了帧时序，但重负载场景仍可能低于 72fps。
-4. **INTL/OVS 不支持**。本发布只打包 CN 镜像；INTL 设备安装会安全 abort，不会写分区。
-5. **不要实时切换刷新率**。离开 120 的 DFPS 切换会黑屏；本模块锁定 120。
+3. **不保证所有应用都跑满 120fps**。面板扫描是 120Hz，应用渲染由 GPU 决定；我通过把眼缓冲降到 2160 大幅改善了帧时序，但重负载场景仍可能低于 72fps。
+4. **其他 global 基线（bee2b067）不支持**。CN 与 Phoenix_ovs（b9666）已打包；未知基线会安全 abort，不写分区。
+5. **Phoenix_ovs 尚未物理机回归**。OVS 120 镜像由官方 b9666 包构建，entry 6 补丁与面板子树已离线校验（与 CN v6 逐字节一致），但我在本发布只在 CN 真机上完成了刷机/升级/卸载回归；首次 OVS 安装请保留 stock 备份。
+6. **不要实时切换刷新率**。离开 120 的 DFPS 切换会黑屏；我的模块锁定 120。
 
 如果蓝边/发雾无法接受，建议回官方 90Hz；继续盲写面板寄存器收益很低。
 
----
+### 故障排查 / 恢复
 
-## 故障排查 / 恢复
+- **开机黑屏、卡 bootloader**：先强制重启或电源键熄屏再亮；能进系统就用 Magisk 安全模式/App 移除模块。卡 bootloader 时进 EDL（Vol Up + Vol Down + Power），用 `edl-ng read-part dtbobak` 读本机原厂槽，确认 `dtbo-stock-5.13.7.img`（`307e7021…`）后 `write-part dtbo`。详见 [RECOVERY.md](RECOVERY.md)。
+- **安装器 abort: Unknown dtbo baseline**：当前 DTBO 不是已知的 stock/v6/vfp14/OVS 基线。先用 EDL/官方固件恢复 stock，再安装。
+- **安装器 abort: Unsupported global**：该国际基线不在本发布内；不要强刷 CN/OVS 镜像。
 
-### 开机黑屏、卡 bootloader、模块导致无法开机
+### 安全红线
 
-1. 先尝试强制重启/电源键；如果能进系统，用 Magisk 安全模式或 Magisk App 移除模块。
-2. 如果卡在 bootloader：
-   - PICO 4 的 fastboot **没有** critical partition 的 unlocktoken 权限，`fastboot flash` 会被拒；
-   - 写分区只能走 **EDL(9008)**：Vol Up + Vol Down + Power 进入 EDL，或 `fastboot reboot edl`；
-   - 用 `edl-ng read-part dtbobak` 读取本机原厂备份槽做 sha 真值，确认 `dtbo-stock-5.13.7.img`（`307e7021…`）后 `write-part dtbo`；
-   - 详细步骤：[RECOVERY.md](RECOVERY.md)。
-
-### 安装器 abort：Unknown dtbo baseline
-
-说明当前 DTBO 不是已知的 stock/v6/vfp14 基线（或已被其他工具改过）。先 EDL/官方固件恢复 stock `307e7021…`，再安装。
-
-### 安装器 abort：INTL / CN-only
-
-本发布只支持 CN。INTL 设备请不要强行刷 CN 镜像，否则 bootloader 可能选错设备树。
-
----
-
-## 安全红线
-
-- 二进制分区镜像只能来自 **`edl-ng read-part`** 或 **官方 firmware 包**；**绝不要**用 `adb shell dd > hostfile` 拉分区（会污染/错位，曾导致设备卡 bootloader）。
+- 二进制分区镜像只能来自 **`edl-ng read-part`** 或 **官方 firmware 包**；**绝不要**用 `adb shell dd > hostfile` 拉分区。
 - 写 `dtbo` 前必须确认镜像大小为 **25,165,824 字节（24 MiB）**，并读回校验 SHA-256。
 - 回滚前先读同机 `dtbobak` 槽做真值对照；`dtbobak` 是工程 abl 建的原厂备份槽，从未被写过。
 - 不要用 `fastboot flash` 写本机的 critical 分区（unlocktoken 缺失）。
 - 刷机前备份 `/sdcard/Download/pico4-dtbo-stock-backup.img`。
 
----
-
-## 技术文档
+### 技术文档
 
 | 文档 | 内容 |
 | --- | --- |
 | [QUICKSTART.md](QUICKSTART.md) | 5 分钟安装/升级/卸载 |
-| [pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md](pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md) | v1.1.0 的画质/时序分析、眼缓冲与晚锁存修复、候选对比 |
+| [pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md](pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md) | 画质/时序分析、眼缓冲与晚锁存修复、候选对比 |
 | [pico4-display-analysis/LS026B3SA_120HZ_FULL_CONFIG.md](pico4-display-analysis/LS026B3SA_120HZ_FULL_CONFIG.md) | LS026B3SA 120Hz 完整配置推导 |
 | [pico4-display-analysis/EDL_120HZ_EXPERIMENT.md](pico4-display-analysis/EDL_120HZ_EXPERIMENT.md) | EDL 直写 DTBO 实验 |
 | [RECOVERY.md](RECOVERY.md) | 砖机恢复、EDL、`*bak` 槽真值 |
 | [HANDOVER-120HZ.md](HANDOVER-120HZ.md) | 项目交接与验证清单 |
 
----
+### 版本历史
 
-## 版本历史
-
+- **v1.2.0（2026-10-20）**：新增 Phoenix_ovs（国际版 b9666）支持；安装器按 stock DTBO 自动选择 CN/OVS 镜像与 stock 回滚镜像；CN 路径已完成真机回归。
 - **v1.1.0（2026-10-20）**：眼缓冲 2816→2160（FrmGpu 约减半）、`xrMiniVsyncBackStep=4` 修复底部撕裂、120Hz SDK 校准、CN 安装器升级/卸载支持、stock CN 回滚镜像。
-- **v1.0.1（本地开发版，未单独发布）**：固件门组件化、Phoenix_ovs 支持、一次性面板重同步、打包可复现。
 - **v1.0.0（2026-09-05）**：首个锁定 120Hz 发布（v6 DTBO + 速率映射 + 开机帧率修正）。
 
----
-
-## 许可
+### 许可
 
 MIT License，见 [LICENSE](LICENSE)。仅供个人设备研究与自用；刷机有风险，请先备份并确认能走 EDL 恢复。
+
+---
+
+## English
+
+> **Current release: v1.2.0 (2026-10-20)**
+> I lock the PICO 4 (PICOA8110 / Phoenix, SHARP5K 4.93") panel at 120 Hz and fix the HMD-service mapping, 120 Hz SDK calibration, eye buffer and bottom-edge latch timing.
+> Supported: **CN (Phoenix) and Phoenix_ovs (international b9666)**, firmware **5.13.7**, Magisk.
+> Other international baselines (bee2b067) are not included in this release.
+>
+> New users: read **[QUICKSTART.md](QUICKSTART.md)**. My full experiment log: **[pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md](pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md)**.
+
+### What I changed
+
+| Item | My change |
+| --- | --- |
+| Panel | Rebuild the stock 90 Hz DTBO as a 120 Hz timing (locked 120, no live multi-rate switching) |
+| HMD service | Patch `libpxrhmdservice.so`: every rate request maps to the 120 config; the SDK `displayRefreshRate` is pinned to 120 |
+| SDK calibration | Use the 120 Hz TimeWarp wait bias 0/0 and exposure 6.5/2.3 ms, not the 72 Hz 20.13/6.78 ms values |
+| Eye buffer | Clamp PICO's 2816×2816 per-eye supersampling to the panel-native 2160×2160 to give the ATW pass GPU headroom |
+| Latch timing | `xrMiniVsyncBackStep=4` removes the bottom-edge late-latch tear |
+| First flash | The installer backs up the stock DTBO, writes the 120 DTBO, verifies the read-back, and arms a one-shot panel resync on the first boot |
+| Upgrade | Directly install over v1.0.0 / v1.1.0 |
+| Uninstall | `uninstall.sh` restores the matching stock DTBO, clears the canary config, resets ConfigurationService and props |
+
+**My measurements (v1.2.0, off-head/desktop):** median `FrmGpu` **13–15 ms**, engine **~65–73 fps**, `VsyncDelay` 2–3; v1.0.0 was ~27–30 ms / 30 fps in the same scene.
+
+### Support
+
+- **Device:** PICO 4 `PICOA8110` (Phoenix), panel `ro.pvr.hmd.type=SHARP5K`.
+- **Firmware:** `ro.build.id` = `5.13.7*`.
+- **Root:** Magisk.
+- **Region:** CN (Phoenix) and Phoenix_ovs (international b9666). The installer picks the 120/stock pair from the current stock DTBO hash. Other international baselines (bee2b067) are not supported.
+- **Architecture:** locked 120 Hz. Any live DFPS switch away from 120 still black-screens, so I deliberately prohibit it.
+
+### Install / upgrade / uninstall
+
+**Fresh install**
+
+1. Download `pico4-120hz-v1.2.0.zip` from the Release.
+2. Magisk → **Modules** → **Install from storage** → select the zip.
+3. Reboot. The screen may blink once on the first boot — that is my one-shot panel resync.
+4. Verify 120 Hz (below).
+
+My installer will:
+- verify firmware/panel/lib/DTBO;
+- detect **CN / Phoenix_ovs** and select the matching 120 and stock images;
+- back up the stock DTBO to `/sdcard/Download/pico4-dtbo-stock-backup.img`;
+- write the 120 DTBO and verify the read-back;
+- install the patched lib, 120 config, eye-buffer/latch fixes and uninstall script.
+
+**Upgrade from v1.0.0 / v1.1.0**
+
+Install the v1.2.0 zip over the existing module, then reboot. My installer accepts the old lib (`32427922…`) and old DTBO (`f0c10d1d…`), skips the partition write, and keeps the stock backup for a later uninstall.
+
+**Uninstall / restore stock**
+
+1. Magisk → **Modules** → remove `Pico4 120Hz Display Unlock`.
+2. Reboot.
+3. The uninstall script restores the matching stock image (CN `307e7021…` / OVS `f4d6073c…`, or the install-time backup), resets the ConfigurationService keys and props, removes the canary config, and leaves a one-shot cleanup script.
+4. The device returns to stock 72 Hz (90 Hz remains selectable).
+
+### Verify 120 Hz
+
+```bash
+adb shell dumpsys SurfaceFlinger | grep -m1 refresh-rate
+# expect: refresh-rate : 120.000005 fps
+
+adb shell dumpsys pxrhmdservice | head -8
+# expect: getRefreshRate ... refreshRate=120.000000
+
+adb shell getprop sys.pvr.display.type
+# expect: 120.000000
+```
+
+### Known limitations
+
+1. **Blue/purple fringing at 2D app edges remains.** It is the panel's 120 Hz analog/charge-calibration limit; `screencap` is clean. None of my DTBO candidates (`b0both`, `panel-b0`, `vfp14`, `e5d5`) or CA toggles changed it.
+2. **A slight overall white/haze remains.** It is the baseline cost of running the 90 Hz gamma/VCOM calibration at 120 Hz, much milder than the early `e5d5` white filter (that was a wrong E5/D5 write and was rolled back).
+3. **Not every app reaches 120 fps.** The scanout is 120 Hz; the app rate is GPU-bound. My 2160 eye-buffer clamp greatly improves frame pacing, but heavy scenes can still fall below 72 fps.
+4. **Other global baselines (bee2b067) are not supported.** CN and Phoenix_ovs (b9666) are bundled; unknown baselines abort safely without touching the partition.
+5. **Phoenix_ovs is not yet physically regression-tested.** I built the OVS 120 image from the official b9666 package and validated entry 6 + the panel subtree (byte-identical to CN v6) offline; this release was flash/upgrade/uninstall-tested on a CN unit only. Keep the stock backup for the first OVS install.
+6. **Do not switch refresh rates live.** Any DFPS switch away from 120 black-screens; my module locks 120.
+
+If the fringing/haze is unacceptable, go back to stock 90 Hz; further blind panel-register writes have low expected value.
+
+### Recovery
+
+- **Black screen / bootloader:** force a reboot or power-cycle; if Android boots, remove the module via Magisk safe mode/App. If stuck in the bootloader, enter EDL (Vol Up + Vol Down + Power), read the unit's `dtbobak` slot with `edl-ng read-part`, verify the stock image (`307e7021…`), then `write-part dtbo`. See [RECOVERY.md](RECOVERY.md).
+- **Installer abort — unknown DTBO baseline:** restore the official stock DTBO first.
+- **Installer abort — unsupported global:** that baseline is not bundled; do not force a CN/OVS image.
+
+### Safety rules
+
+- Partition images must come from **`edl-ng read-part`** or the **official firmware package**; never use `adb shell dd > hostfile`.
+- Verify the image is **25,165,824 bytes (24 MiB)** and read back the SHA-256 before/after writing `dtbo`.
+- Read the unit's `dtbobak` slot as ground truth before rolling back.
+- Do not use `fastboot flash` on this unit's critical partitions (no unlocktoken authority).
+- Keep `/sdcard/Download/pico4-dtbo-stock-backup.img`.
+
+### Docs / history / license
+
+- [QUICKSTART.md](QUICKSTART.md) — install/upgrade/uninstall
+- [QUALITY_120HZ_ANALYSIS.md](pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md) — my full quality/timing analysis
+- [RECOVERY.md](RECOVERY.md) — brick recovery and EDL
+- [HANDOVER-120HZ.md](HANDOVER-120HZ.md) — project handover and test checklist
+- v1.2.0: Phoenix_ovs (b9666) support, CN/OVS auto-selection.
+- v1.1.0: eye buffer 2160, `xrMiniVsyncBackStep=4`, 120 Hz calibration, upgrade/uninstall.
+- v1.0.0: first locked-120 Hz release.
+
+MIT License — see [LICENSE](LICENSE). For personal research only; back up and confirm EDL recovery before flashing.
+
+---
+
+## Русский
+
+> **Текущий релиз: v1.2.0 (2026-10-20)**
+> Я зафиксировал панель PICO 4 (PICOA8110 / Phoenix, SHARP5K 4.93") на 120 Гц и исправил отображение частот в HMD-сервисе, калибровку SDK для 120 Гц, буфер глаза и задержку защёлкивания нижней строки.
+> Поддержка: **CN (Phoenix) и Phoenix_ovs (международная b9666)**, прошивка **5.13.7**, Magisk.
+> Другие международные базовые прошивки (bee2b067) в релиз не входят.
+>
+> Для быстрого старта: **[QUICKSTART.md](QUICKSTART.md)**. Мой полный журнал экспериментов: **[pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md](pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md)**.
+
+### Что я изменил
+
+| Компонент | Моё изменение |
+| --- | --- |
+| Панель | Пересобрал штатный DTBO 90 Гц в тайминг 120 Гц (locked 120, без живого переключения) |
+| HMD-сервис | Патч `libpxrhmdservice.so`: все запросы частоты ведут в конфиг 120; `displayRefreshRate` SDK зафиксирован на 120 |
+| Калибровка SDK | Использую TimeWarp wait bias 0/0 и экспозицию 6.5/2.3 мс для 120 Гц вместо 20.13/6.78 мс для 72 Гц |
+| Буфер глаза | Ограничил суперсэмплинг PICO 2816×2816 на глаз до родных 2160×2160, чтобы дать GPU запас для ATW |
+| Защёлкивание | `xrMiniVsyncBackStep=4` убирает разрыв/линию у нижней кромки панели |
+| Первая прошивка | Установщик сохраняет штатный DTBO, пишет 120 DTBO, проверяет чтением и делает одну пересинхронизацию панели при первой загрузке |
+| Обновление | Прямая установка поверх v1.0.0 / v1.1.0 |
+| Удаление | `uninstall.sh` восстанавливает штатный DTBO нужного варианта, чистит canary-конфиг, сбрасывает ConfigurationService и props |
+
+**Мои замеры (v1.2.0, без головы/desktop):** медиана `FrmGpu` **13–15 мс**, движок **~65–73 fps**, `VsyncDelay` 2–3; в v1.0.0 та же сцена давала ~27–30 мс / 30 fps.
+
+### Поддержка
+
+- **Устройство:** PICO 4 `PICOA8110` (Phoenix), панель `ro.pvr.hmd.type=SHARP5K`.
+- **Прошивка:** `ro.build.id` = `5.13.7*`.
+- **Root:** Magisk.
+- **Регион:** CN (Phoenix) и Phoenix_ovs (международная b9666). Установщик выбирает пару 120/stock по хешу текущего stock DTBO. Другие международные базы (bee2b067) не поддерживаются.
+- **Архитектура:** фиксированные 120 Гц. Любое живое переключение DFPS с 120 по-прежнему даёт чёрный экран, поэтому я его намеренно запрещаю.
+
+### Установка / обновление / удаление
+
+**Чистая установка**
+
+1. Скачайте `pico4-120hz-v1.2.0.zip` из Release.
+2. Magisk → **Модули** → **Установить из хранилища** → выберите zip.
+3. Перезагрузитесь. При первой загрузке экран может моргнуть — это моя одноразовая пересинхронизация панели.
+4. Проверьте 120 Гц (ниже).
+
+Мой установщик:
+- проверяет прошивку/панель/lib/DTBO;
+- определяет **CN / Phoenix_ovs** и выбирает соответствующие образы 120 и stock;
+- сохраняет штатный DTBO в `/sdcard/Download/pico4-dtbo-stock-backup.img`;
+- пишет 120 DTBO и проверяет чтением;
+- ставит патченный lib, конфиг 120, исправления буфера/защёлкивания и скрипт удаления.
+
+**Обновление с v1.0.0 / v1.1.0**
+
+Установите zip v1.2.0 поверх модуля и перезагрузитесь. Мой установщик принимает старый lib (`32427922…`) и старый DTBO (`f0c10d1d…`), не перезаписывает раздел и сохраняет штатный бэкап для удаления.
+
+**Удаление / возврат к stock**
+
+1. Magisk → **Модули** → удалить `Pico4 120Hz Display Unlock`.
+2. Перезагрузитесь.
+3. Скрипт удаления восстановит штатный образ нужного варианта (CN `307e7021…` / OVS `f4d6073c…` или бэкап установки), сбросит ключи ConfigurationService и props, удалит canary-конфиг и оставит одноразовый скрипт очистки.
+4. Устройство вернётся к штатным 72 Гц (90 Гц останется доступным).
+
+### Проверка 120 Гц
+
+```bash
+adb shell dumpsys SurfaceFlinger | grep -m1 refresh-rate
+# ожидается: refresh-rate : 120.000005 fps
+
+adb shell dumpsys pxrhmdservice | head -8
+# ожидается: getRefreshRate ... refreshRate=120.000000
+
+adb shell getprop sys.pvr.display.type
+# ожидается: 120.000000
+```
+
+### Известные ограничения
+
+1. **Сине-фиолетовая кайма по краям 2D-приложений остаётся.** Это предел аналоговой/зарядной калибровки панели на 120 Гц; `screencap` чистый. Ни один из моих DTBO-кандидатов (`b0both`, `panel-b0`, `vfp14`, `e5d5`) и переключателей CA это не исправил.
+2. **Остаётся лёгкая общая белесость/дымка.** Это базовая цена запуска гаммы/VCOM от 90 Гц на 120 Гц; она намного слабее раннего белого фильтра `e5d5` (тот был вызван ошибочной записью E5/D5 и откачен).
+3. **Не все приложения достигают 120 fps.** Развёртка 120 Гц, частота приложения ограничена GPU. Мой клэмп буфера глаза до 2160 сильно улучшает пейсинг, но тяжёлые сцены всё ещё могут быть ниже 72 fps.
+4. **Другие международные базы (bee2b067) не поддерживаются.** CN и Phoenix_ovs (b9666) включены; неизвестная база безопасно прерывает установку, не трогая раздел.
+5. **Phoenix_ovs ещё не прошёл физическую регрессию.** Я собрал OVS 120 из официального пакета b9666 и офлайн проверил entry 6 и поддерево панели (побайтово совпадает с CN v6); в этом релизе я прогнал прошивку/обновление/удаление только на CN-устройстве. Для первой установки на OVS сохраните stock-бэкап.
+6. **Не переключайте частоту на лету.** Любое переключение DFPS с 120 даёт чёрный экран; мой модуль фиксирует 120.
+
+Если кайма/дымка неприемлемы, вернитесь на штатные 90 Гц; дальнейшие слепые записи регистров панели дают мало шансов.
+
+### Восстановление
+
+- **Чёрный экран / bootloader:** принудительная перезагрузка или выключение/включение; если Android загружается — удалите модуль через Magisk safe mode/App. Если застряли в bootloader — EDL (Vol Up + Vol Down + Power), прочитайте слот `dtbobak` через `edl-ng read-part`, проверьте stock-образ (`307e7021…`), затем `write-part dtbo`. Подробно: [RECOVERY.md](RECOVERY.md).
+- **Установщик abort — unknown DTBO baseline:** сначала восстановите официальный stock DTBO.
+- **Установщик abort — unsupported global:** эта база не входит в релиз; не форсируйте CN/OVS-образ.
+
+### Правила безопасности
+
+- Образы разделов — только из **`edl-ng read-part`** или **официального firmware-пакета**; никогда не используйте `adb shell dd > hostfile`.
+- Перед записью `dtbo` проверьте размер **25 165 824 байт (24 MiB)** и SHA-256 после чтения.
+- Перед откатом прочитайте слот `dtbobak` этого устройства как эталон.
+- Не используйте `fastboot flash` для critical-разделов (нет unlocktoken).
+- Сохраняйте `/sdcard/Download/pico4-dtbo-stock-backup.img`.
+
+### Документация / история / лицензия
+
+- [QUICKSTART.md](QUICKSTART.md) — установка/обновление/удаление
+- [QUALITY_120HZ_ANALYSIS.md](pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md) — мой полный анализ качества/таймингов
+- [RECOVERY.md](RECOVERY.md) — восстановление и EDL
+- [HANDOVER-120HZ.md](HANDOVER-120HZ.md) — передача проекта и чек-лист
+- v1.2.0: поддержка Phoenix_ovs (b9666), авто-выбор CN/OVS.
+- v1.1.0: буфер глаза 2160, `xrMiniVsyncBackStep=4`, калибровка 120 Гц, обновление/удаление.
+- v1.0.0: первый релиз с фиксированными 120 Гц.
+
+MIT License — см. [LICENSE](LICENSE). Только для личных исследований; сделайте бэкап и убедитесь в возможности восстановления через EDL.
