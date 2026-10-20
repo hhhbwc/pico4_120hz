@@ -16,7 +16,15 @@
 
 set -u
 
-HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# Resolve the script directory without dirname: some Git-for-Windows setups
+# provide a dirname shim that does not skip the "--" separator, returns two
+# lines, and turns HERE into an invalid path.
+SCRIPT_PATH=${BASH_SOURCE[0]}
+case "$SCRIPT_PATH" in
+    */*) HERE=$(cd -- "${SCRIPT_PATH%/*}" && pwd) || {
+             echo "cannot resolve the script directory" >&2; exit 1; } ;;
+    *)   HERE=$(pwd) ;;
+esac
 MODULE_SRC="$HERE/../magisk-module"
 CUSTOMIZE="$MODULE_SRC/customize.sh"
 SERVICE="$MODULE_SRC/service.sh"
@@ -33,7 +41,8 @@ FAILED_NAMES=()
 # honest: edit the installer and the tests follow.
 hash_of() {
     local key="$1"
-    sed -nE "s|^${key}=\"([0-9a-f]+)\"$|\\1|p" "$CUSTOMIZE" | head -1
+    tr -d '\r' < "$CUSTOMIZE" \
+        | sed -nE "s|^${key}=\"([0-9a-f]+)\"$|\\1|p" | head -1
 }
 STOCK_CN=$(hash_of STOCK_DTBO_CN)
 STOCK_INTL=$(hash_of STOCK_DTBO_INTL)
@@ -41,8 +50,9 @@ V6_CN=$(hash_of V6_DTBO_CN)
 V6_INTL=$(hash_of V6_DTBO_INTL)
 BASE_LIB=$(hash_of BASE_LIB_SHA256)
 PATCHED_LIB=$(hash_of PATCHED_LIB_SHA256)
-for v in STOCK_CN STOCK_INTL V6_CN V6_INTL BASE_LIB PATCHED_LIB; do
-    if [ -z "${!v}" ] || [ "${#v}" != 0 ] && [ "${!v}" = "" ]; then
+PREV_LIB=$(hash_of PREV_LIB_SHA256)
+for v in STOCK_CN STOCK_INTL V6_CN V6_INTL BASE_LIB PATCHED_LIB PREV_LIB; do
+    if [ -z "${!v}" ]; then
         echo "failed to extract a hash from customize.sh ($v)" >&2
         exit 1
     fi
@@ -99,7 +109,23 @@ CUSTOMIZE_RUN="$FAKE_ROOT/customize.sh"
 # Rewrite the two device-specific lines. Python does the substitution because
 # sed cannot copy a literal "$(...)" into the replacement text without treating
 # it as its own syntax.
-PY="${PYTHON:-C:/Users/wzy/.workbuddy/binaries/python/versions/3.13.12/python.exe}"
+# Python is used only for the two literal substitutions below. Probe the
+# interpreter instead of trusting PATH order: on Windows "python3" can be the
+# Microsoft Store stub, which is not a usable Python.
+PY=${PYTHON:-}
+if [ -z "$PY" ]; then
+    for candidate in python3 python py; do
+        if command -v "$candidate" >/dev/null 2>&1 \
+                && "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 6) else 1)' >/dev/null 2>&1; then
+            PY=$candidate
+            break
+        fi
+    done
+fi
+if [ -z "$PY" ]; then
+    echo "no working Python 3 found; set PYTHON=/path/to/python3" >&2
+    rm -rf "$FAKE_ROOT"; exit 1
+fi
 "$PY" - "$CUSTOMIZE" "$CUSTOMIZE_RUN" "$DTBO_NODE" <<'PYEOF'
 import sys
 src, dst, node = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -139,6 +165,7 @@ reset_scenario() {
     SCEN_DTBO_BLOCK=1
     SCEN_DD_FAIL=""
     SCEN_BAD_ZIP=0
+    SCEN_BAD_MODULE_LIB=0
     SCEN_CONFIG_SERVICE_OK=1
     ABORT_MSG=""
     MODPATH=""
@@ -180,11 +207,10 @@ abort() {
 set_perm() { return 0; }
 set_perm_recursive() { return 0; }
 mount_ext_rw() { return 0; }
-# customize.sh calls `chmod 644 "$BACKUP" 2>/dev/null` with no `|| true`, so
-# under errexit a failure there would abort the install. On device the path
-# exists; here /sdcard does not, and the real chmod would fail. Mock it so the
-# harness tests the installer's logic rather than this machine's filesystem --
-# the "chmod fails" case is covered separately by SCEN_CHMOD_FAIL.
+# The real /sdcard/Download path does not exist on the host, and the installer
+# treats chmod as best-effort. Mock it so the harness tests the installer's
+# logic rather than this machine's filesystem. SCEN_CHMOD_FAIL can still force
+# the failure path if a future test needs it.
 chmod() {
     if [ "${SCEN_CHMOD_FAIL:-0}" = "1" ]; then return 1; fi
     return 0
@@ -199,6 +225,20 @@ sync() { return 0; }
 # partition node to a ".lnk" symlink, so an exact match on "dtbo" would miss.
 # Order matters -- the most specific pattern has to win.
 fixture_hash() {
+    # The extracted module lib is the patched one shipped in the zip, while
+    # $SCEN_LIB_HASH describes the system lib the installer checks first.
+    if [ -n "${MODPATH:-}" ]; then
+        case "$1" in
+            "$MODPATH"/dtbo-stock.img) echo "$STOCK_CN"; return 0 ;;
+            "$MODPATH"/*)
+                if [ "$SCEN_BAD_MODULE_LIB" = "1" ]; then
+                    echo "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+                else
+                    echo "$PATCHED_LIB"
+                fi
+                return 0 ;;
+        esac
+    fi
     local base="${1##*/}"
     case "$base" in
         *dtbo-stock-backup.img) echo "$BACKUP_HASH" ;;
@@ -300,6 +340,9 @@ unzip() {
             mkdir -p "$MODPATH/system/lib64"
             : > "$MODPATH/module.prop"
             : > "$MODPATH/service.sh"
+            : > "$MODPATH/post-fs-data.sh"
+            : > "$MODPATH/uninstall.sh"
+            : > "$MODPATH/dtbo-stock.img"
             : > "$MODPATH/system/lib64/libpxrhmdservice.so"
             ;;
         dtbo-*)
@@ -366,6 +409,7 @@ run_service() {
     # kills the script before it has done anything.
     rm -f "$SPOOL/calls" "$SPOOL/props" "$SPOOL/log" "$SPOOL/events"
     export SPOOL MODDIR
+    export NOSCREENFIX="${NOSCREENFIX:-}"
     export SCEN_BOOT_COMPLETED="${SCEN_BOOT_COMPLETED:-1}"
     export SCEN_CONFIG_SERVICE_OK="${SCEN_CONFIG_SERVICE_OK:-1}"
     [ "$VERBOSE" = 1 ] && echo "    [dbg] MODDIR=$MODDIR marker=$([ -f "$MODDIR/screen_fix_once" ] && echo yes || echo no)"
@@ -374,7 +418,7 @@ run_service() {
     local last="" cur="" stable=0
     while [ "$stable" -lt 3 ]; do
         command sleep 0.05
-        cur=$(cat "$SPOOL/calls" "$SPOOL/props" "$SPOOL/events" 2>/dev/null | md5sum)
+        cur=$(cat "$SPOOL/calls" "$SPOOL/props" "$SPOOL/events" 2>/dev/null | cksum)
         if [ "$cur" = "$last" ]; then
             stable=$((stable+1))
         else
@@ -466,7 +510,7 @@ reset_scenario; SCEN_DEVICE="PICOA8111"; run_installer
 assert_abort "rejects wrong device"
 case "$ABORT_MSG" in *"PICOA8111"*) check "device error names the device" 1 ;; *) check "device error names the device" 0 "$ABORT_MSG" ;; esac
 
-reset_scenario; SCEN_PANEL="SHARP5K" SCEN_PANEL_BAD=1 SCEN_PANEL="JDI"; run_installer
+reset_scenario; SCEN_PANEL="JDI"; run_installer
 assert_abort "rejects wrong panel"
 
 banner "installer: dtbo baseline selection"
@@ -479,10 +523,8 @@ check "CN arms the one-shot resync" "$(resync_armed)"
 check "CN variant announced" "$(ui_says 'CN / Phoenix')"
 
 reset_scenario; SCEN_DTBO_HASH="$STOCK_INTL"; run_installer
-assert_no_abort "INTL stock accepted"
-check "INTL writes the partition once" "$([ "$(flashes)" = 1 ] && echo 1 || echo 0)" "writes=$(flashes)"
-check "INTL backs the stock image up before writing" "$([ -n "$(backups)" ] && echo 1 || echo 0)"
-check "INTL variant announced" "$(ui_says 'global / Phoenix_ovs')"
+assert_abort "INTL stock is rejected by the CN-only release"
+case "$ABORT_MSG" in *"CN"*) check "INTL rejection names the CN-only scope" 1 ;; *) check "INTL rejection names the CN-only scope" 0 "$ABORT_MSG" ;; esac
 
 reset_scenario; SCEN_DTBO_HASH="$V6_CN"; run_installer
 assert_no_abort "already-flashed CN reinstalls without flashing"
@@ -505,6 +547,9 @@ banner "installer: overlay lib gate"
 reset_scenario; SCEN_LIB_HASH="$PATCHED_LIB"; run_installer
 assert_no_abort "accepts the patched lib (upgrade path)"
 
+reset_scenario; SCEN_LIB_HASH="$PREV_LIB"; run_installer
+assert_no_abort "accepts the v1.0.0 patched lib (upgrade path)"
+
 reset_scenario; SCEN_LIB_HASH="deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"; run_installer
 assert_abort "rejects a foreign overlay lib"
 
@@ -525,6 +570,13 @@ reset_scenario; SCEN_BAD_ZIP=1; run_installer
 assert_abort "rejects a corrupt bundled image"
 case "$ABORT_MSG" in *"corrupt"*) check "corrupt-image error is explicit" 1 ;; *) check "corrupt-image error is explicit" 0 "$ABORT_MSG" ;; esac
 
+reset_scenario; SCEN_BAD_MODULE_LIB=1; run_installer
+assert_abort "rejects a corrupt bundled lib"
+case "$ABORT_MSG" in
+    *"Bundled libpxrhmdservice.so is corrupt"*) check "corrupt-lib error is explicit" 1 ;;
+    *) check "corrupt-lib error is explicit" 0 "$ABORT_MSG" ;;
+esac
+
 reset_scenario; SCEN_DD_FAIL=flash; run_installer
 assert_abort "aborts when dd fails"
 
@@ -534,7 +586,7 @@ banner "installer: hash consistency between installer and packager"
 # it bundles. If one copy of a hash is edited without the other, the installer
 # ships a zip that aborts on device. Both V6 hashes and the patched lib must
 # therefore appear in both files, byte for byte.
-for pair in "V6_DTBO_CN:$V6_CN" "V6_DTBO_INTL:$V6_INTL" "PATCHED_LIB:$PATCHED_LIB"; do
+for pair in "V6_DTBO_CN:$V6_CN" "PATCHED_LIB:$PATCHED_LIB"; do
     name=${pair%%:*}
     hash=${pair#*:}
     in_install=$(grep -c "$hash" "$CUSTOMIZE" || true)
@@ -543,9 +595,12 @@ for pair in "V6_DTBO_CN:$V6_CN" "V6_DTBO_INTL:$V6_INTL" "PATCHED_LIB:$PATCHED_LI
           "$([ "$in_install" -ge 1 ] && [ "$in_pack" -ge 1 ] && echo 1 || echo 0)" \
           "customize=$in_install build_zip=$in_pack"
 done
+check "STOCK_DTBO_CN hash bundled by build_zip.py" \
+      "$([ "$(grep -c "$STOCK_CN" "$MODULE_SRC/build_zip.py" || true)" -ge 1 ] && echo 1 || echo 0)"
+check "PREV_LIB_SHA256 declared in customize.sh" \
+      "$([ "$(grep -c "$PREV_LIB" "$CUSTOMIZE" || true)" -ge 1 ] && echo 1 || echo 0)"
 # The stock baselines are only ever compared against, never bundled, so they
-# belong in customize.sh alone -- but both variants must be there, otherwise a
-# global unit hits the "unknown baseline" abort.
+# belong in customize.sh. Both variants must be present for the gate logic.
 for pair in "STOCK_DTBO_CN:$STOCK_CN" "STOCK_DTBO_INTL:$STOCK_INTL"; do
     name=${pair%%:*}
     hash=${pair#*:}
@@ -581,6 +636,16 @@ check "the marker is consumed, not left behind" \
 run_service "$MODDIR"
 check "the boot after that does not cycle again" \
       "$([ "$(svc_events)" = 0 ] && echo 1 || echo 0)" "events=$(svc_events)"
+
+: > "$MODDIR/screen_fix_once"
+NOSCREENFIX=$(mktemp)
+run_service "$MODDIR"
+check "the opt-out file suppresses the resync" \
+      "$([ "$(svc_events)" = 0 ] && echo 1 || echo 0)" "events=$(svc_events)"
+check "the opt-out still consumes the marker" \
+      "$([ ! -f "$MODDIR/screen_fix_once" ] && echo 1 || echo 0)"
+rm -f "$NOSCREENFIX"
+unset NOSCREENFIX
 rm -rf "$MODDIR"
 
 banner "service.sh: config service unavailable"

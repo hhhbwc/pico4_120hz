@@ -35,8 +35,12 @@ if [ -z "$total" ] || [ -z "$pclk" ]; then
 else
     printf '  DSI_VIDEO_MODE_TOTAL = %s\n' "$total"
     printf '  pixel clock          = %s Hz\n' "$pclk"
-    awk -v t="$total" -v c="$pclk" 'BEGIN {
-        v = strtonum(t); h = and(v, 65535) + 1; vt = int(v / 65536) + 1
+    # POSIX shell arithmetic instead of gawk's strtonum()/and(); mawk and
+    # busybox awk (the default on many hosts) have neither.
+    total_val=$((total))
+    h=$(( (total_val & 0xFFFF) + 1 ))
+    vt=$(( (total_val >> 16) + 1 ))
+    awk -v h="$h" -v vt="$vt" -v c="$pclk" 'BEGIN {
         printf "  htotal = %d, vtotal = %d\n", h, vt
         printf "  actual refresh rate  = %.3f Hz\n", c / (h * vt)
     }'

@@ -3,11 +3,11 @@
 SKIPUNZIP=1
 SKIPMOUNT=false
 PROPFILE=false
-POSTFSDATA=false
+POSTFSDATA=true
 LATESTARTSERVICE=true
 
 ui_print "======================================"
-ui_print "  Pico4 120Hz Display Unlock v1.0.1"
+ui_print "  Pico4 120Hz Display Unlock v1.1.0"
 ui_print "======================================"
 
 # Firmware gate, component-wise. 5.13.7 ships under several device-tree
@@ -38,12 +38,14 @@ fi
 # hashes to the patched value — the base was verified at first install, accept
 # both.
 BASE_LIB_SHA256="c290a9f51214ff37b415c309c5facf80542024d40c22e5ae3cdeff9825a31fef"
-PATCHED_LIB_SHA256="32427922a3c695453ec85a1c3c454bd984db95b55f0de095689cdd2f8af36eea"
+PATCHED_LIB_SHA256="8b4431d4c8f7ebec4bdead981800780347f376e10da10bdb90d6f2977187c829"
+# v1.0.0 module: upgrading from it must pass the mounted-lib gate.
+PREV_LIB_SHA256="32427922a3c695453ec85a1c3c454bd984db95b55f0de095689cdd2f8af36eea"
 BASE_LIB="/system/lib64/libpxrhmdservice.so"
 DTBO_PART="/dev/block/by-name/dtbo"
 
 # Two stock baselines and their matching 120Hz images. CN (Phoenix) and global
-# (Phoenix_ovs) firmware ship the same sixteen dtbo entries in different
+# (INTL) firmware ship the same sixteen dtbo entries in different
 # orders and hash differently, so the patched image must be built from the
 # matching stock one — flashing a CN-ordered image onto a global unit would
 # move every entry and the bootloader would select the wrong board tree.
@@ -51,8 +53,13 @@ DTBO_PART="/dev/block/by-name/dtbo"
 # entry a given unit actually boots.
 STOCK_DTBO_CN="307e702182e731b76e8bc0a4aec131a53e1ddf82e96f2f416e2f49129e6d46ac"
 STOCK_DTBO_INTL="bee2b0676e04d93135c660f1c80157afd06e52678432ea2db9f9c90b47007d9e"
-V6_DTBO_CN="a57573ae89a26bc37db10d8b258a25f2cf343b042246519144ff3213508ff385"
+# v1.1.0 CN bundle: the v6 init120 image from the v1.0.0 release.
+V6_DTBO_CN="f0c10d1dd04dd9a7c46b319758dbdd5f7540fe06aaf807377d23392c71aa20ea"
+# Pre-1.1 universal / vfp14 images, accepted on upgrade/reinstall without
+# rewriting the partition.
+V6_DTBO_UNIVERSAL_CN="a57573ae89a26bc37db10d8b258a25f2cf343b042246519144ff3213508ff385"
 V6_DTBO_INTL="0ab8b85ed85203bd0096f4a89f12d18a0746d7bd461a7d7c0e355ace727936e9"
+V6_DTBO_VFP14="806951abf48af261a3dac002aca79c7df321fa9d24564e593ecbc6b7b69d5c4c"
 
 sha256_file() {
     local output digest
@@ -69,17 +76,25 @@ if [ ! -b "$DTBO_PART" ]; then
 fi
 
 base_lib_hash=$(sha256_file "$BASE_LIB") || abort "Cannot hash $BASE_LIB"
-if [ "$base_lib_hash" != "$BASE_LIB_SHA256" ] && [ "$base_lib_hash" != "$PATCHED_LIB_SHA256" ]; then
+if [ "$base_lib_hash" != "$BASE_LIB_SHA256" ] && [ "$base_lib_hash" != "$PATCHED_LIB_SHA256" ] && [ "$base_lib_hash" != "$PREV_LIB_SHA256" ]; then
     abort "Stock libpxrhmdservice.so mismatch: $base_lib_hash (post this hash to github.com/hhhbwc/pico4_120hz issue #2)"
 fi
 
 # Extract module files manually: Magisk's built-in extractor skips zip
 # entries without Unix permission bits.
-unzip -o "$ZIPFILE" "module.prop" "service.sh" "system/*" -d "$MODPATH" >/dev/null 2>&1     || abort "Failed to extract module files"
+unzip -o "$ZIPFILE" "module.prop" "service.sh" "post-fs-data.sh" "uninstall.sh" "dtbo-stock.img" "system/*" -d "$MODPATH" >/dev/null 2>&1     || abort "Failed to extract module files"
 set_perm_recursive "$MODPATH" 0 0 0755 0644
 set_perm "$MODPATH/service.sh" 0 0 0755
+set_perm "$MODPATH/post-fs-data.sh" 0 0 0755
+set_perm "$MODPATH/uninstall.sh" 0 0 0755
 [ -f "$MODPATH/system/lib64/libpxrhmdservice.so" ] || abort "libpxrhmdservice.so missing after extraction"
 [ -f "$MODPATH/service.sh" ] || abort "service.sh missing after extraction"
+[ -f "$MODPATH/uninstall.sh" ] || abort "uninstall.sh missing after extraction"
+[ -f "$MODPATH/dtbo-stock.img" ] || abort "dtbo-stock.img missing after extraction"
+module_lib_hash=$(sha256_file "$MODPATH/system/lib64/libpxrhmdservice.so") || abort "Unable to hash extracted libpxrhmdservice.so"
+[ "$module_lib_hash" = "$PATCHED_LIB_SHA256" ] || abort "Bundled libpxrhmdservice.so is corrupt (expected $PATCHED_LIB_SHA256, got $module_lib_hash)"
+stock_img_hash=$(sha256_file "$MODPATH/dtbo-stock.img") || abort "Unable to hash bundled stock dtbo"
+[ "$stock_img_hash" = "$STOCK_DTBO_CN" ] || abort "Bundled stock dtbo is corrupt (expected $STOCK_DTBO_CN, got $stock_img_hash)"
 
 current_dtbo=$(sha256_file "$DTBO_PART") || abort "Unable to hash dtbo partition"
 
@@ -96,10 +111,9 @@ case "$current_dtbo" in
         NEED_FLASH=1
         ;;
     "$STOCK_DTBO_INTL")
-        DTBO_ENTRY="dtbo-intl.img"; DTBO_TARGET="$V6_DTBO_INTL"; VARIANT="global / Phoenix_ovs"
-        NEED_FLASH=1
+        abort "This release bundles the CN (Phoenix) dtbo only; the INTL/OVS image is not included. Use the CN release on CN units, or build the INTL image from your stock dtbo."
         ;;
-    "$V6_DTBO_CN"|"$V6_DTBO_INTL")
+    "$V6_DTBO_CN"|"$V6_DTBO_UNIVERSAL_CN"|"$V6_DTBO_INTL"|"$V6_DTBO_VFP14")
         ui_print "- 120Hz dtbo already flashed, skipping partition write"
         NEED_FLASH=0
         ;;
@@ -144,6 +158,7 @@ ui_print "======================================"
 ui_print " Reboot to apply. Panel runs 120Hz."
 ui_print " A screen blink seconds after boot is"
 ui_print " the automatic panel resync - expected."
-ui_print " Restore stock: flash your dtbo"
-ui_print " backup + disable this module."
+ui_print " Upgrade: install this zip over v1.0.0."
+ui_print " Uninstall: Magisk -> remove module;"
+ui_print " uninstall.sh restores the stock dtbo."
 ui_print "======================================"

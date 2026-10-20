@@ -19,8 +19,10 @@ rate requests never land on the real 120 config. Two mappings exist:
 The device's stock lib can be pulled with:
   adb pull /system/lib64/libpxrhmdservice.so
 
-``--verify`` recomputes the shipped output and compares it byte-for-byte
-against the lib committed to the repository.
+``--verify`` recomputes the shipped output, compares it byte-for-byte against
+the lib committed to the repository, and only then writes. ``--v7`` refuses to
+overwrite that committed lib, so a diagnostic run cannot poison the file the
+packagers hash-check.
 """
 from __future__ import annotations
 
@@ -30,8 +32,16 @@ import struct
 import sys
 from pathlib import Path
 
-SHIPPED_LIB_SHA256 = "32427922a3c695453ec85a1c3c454bd984db95b55f0de095689cdd2f8af36eea"
+SHIPPED_LIB_SHA256 = "8b4431d4c8f7ebec4bdead981800780347f376e10da10bdb90d6f2977187c829"
 COMMITTED_LIB = Path(__file__).resolve().parent / "libpxrhmdservice.patched.so"
+
+# The HMD service writes the requested logical rate into the ConfigurationService
+# key "displayRefreshRate". The SDK selects its TimeWarp/exposure rules from
+# that key, so a shell request of 72 would otherwise pull the 72 Hz calibration
+# onto the 120 Hz scan. Force the two snprintf sites to 120.
+RATE_FORCE_SITES = (0x37070, 0x37190)
+RATE_FORCE_OLD = bytes.fromhex("e303142a")  # mov w3, w20
+RATE_FORCE_NEW = bytes.fromhex("030f8052")  # mov w3, #120
 
 # Rate-request sites inside libpxrhmdservice.so (vaddr == file offset).
 # Each site stores a <II> pair: [SF config index, PICO marker 3].
@@ -49,10 +59,15 @@ MAPPINGS = {
 }
 
 
-def patch(src: bytes, mapping: dict) -> bytes:
+def patch(src: bytes, mapping: dict, force_config_120: bool = False) -> bytes:
     data = bytearray(src)
     for addr, (lo, hi) in mapping.items():
         struct.pack_into("<II", data, addr, lo, hi)
+    if force_config_120:
+        for addr in RATE_FORCE_SITES:
+            if data[addr:addr + 4] != RATE_FORCE_OLD:
+                raise ValueError(f"unexpected instruction at 0x{addr:X}: {data[addr:addr + 4].hex()}")
+            data[addr:addr + 4] = RATE_FORCE_NEW
     return bytes(data)
 
 
@@ -71,30 +86,51 @@ def main() -> int:
     parser.add_argument("--v7", action="store_true",
                         help="build the diagnostic true-three-rate mapping instead of the shipped all->cfg0 mapping")
     parser.add_argument("--verify", action="store_true",
-                        help="after patching, compare the output against the committed shipped lib")
+                        help="compare the result against the committed shipped lib before writing")
     args = parser.parse_args()
 
-    src = Path(args.src).read_bytes()
+    if args.v7 and args.verify:
+        parser.error("--verify checks the shipped mapping and cannot be combined with --v7")
+
+    src_path = Path(args.src)
+    dst = Path(args.dst)
+    if not src_path.is_file():
+        print(f"missing stock lib at {src_path}", file=sys.stderr)
+        return 1
+    src = src_path.read_bytes()
+    for name, addr in RATE_SITES.items():
+        if addr + 8 > len(src):
+            print(f"{src_path} is too small for the {name} site at 0x{addr:X}", file=sys.stderr)
+            return 1
+
     mode = "v7" if args.v7 else "shipped"
-    out = patch(src, MAPPINGS[mode])
+    out = patch(src, MAPPINGS[mode], force_config_120=(mode == "shipped"))
     print(f"mode: {mode}")
+    if mode == "shipped":
+        print("  config-rate sites 0x37070/0x37190: forced to 120")
     report(src, out)
     digest = hashlib.sha256(out).hexdigest()
     print("output sha256:", digest)
 
-    Path(args.dst).write_bytes(out)
-    print("written:", args.dst)
+    if args.v7 and dst.resolve() == COMMITTED_LIB.resolve():
+        print(f"REFUSING to overwrite the shipped lib {COMMITTED_LIB} with the diagnostic\n"
+              "--v7 mapping; pass an explicit output path", file=sys.stderr)
+        return 1
 
-    if args.verify and not args.v7:
+    if args.verify:
         if digest != SHIPPED_LIB_SHA256:
             print(f"VERIFY FAILED: output hash != shipped constant {SHIPPED_LIB_SHA256}", file=sys.stderr)
             return 1
-        committed = COMMITTED_LIB.read_bytes()
-        if out != committed:
+        if not COMMITTED_LIB.is_file():
+            print(f"VERIFY FAILED: committed {COMMITTED_LIB} is missing", file=sys.stderr)
+            return 1
+        if out != COMMITTED_LIB.read_bytes():
             print(f"VERIFY FAILED: differs from committed {COMMITTED_LIB.name}", file=sys.stderr)
             return 1
         print(f"verified byte-identical to committed {COMMITTED_LIB.name}")
 
+    dst.write_bytes(out)
+    print("written:", dst)
     return 0
 
 

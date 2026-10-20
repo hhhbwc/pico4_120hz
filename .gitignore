@@ -19,4 +19,7 @@ pico4-display-analysis/forensics/
 # scratch analysis output
 pico4-display-analysis/stock_phy.txt
 pico4-display-analysis/*.log
+pico4-display-analysis/panel-level/
+pico4-display-analysis/recovery-edl/
+pico4-display-analysis/release-v1.0.0/
 config-device.gz
