@@ -6,14 +6,14 @@
 
 ## 中文
 
-> **当前发布：v1.2.0（2026-10-20）**
+> **当前发布：v1.2.1（2026-10-20）**
 > 我把 PICO 4（PICOA8110 / Phoenix，SHARP5K 4.93"）的面板锁定在 120Hz，并配套改了 HMD 服务、SDK 校准、眼缓冲和底部锁存时序。
 > 支持 **CN（Phoenix）与 Phoenix_ovs（国际版 b9666）**、固件 **5.13.7**、Magisk。
 > 其他国际基线（bee2b067）不在本发布内。
 >
 > 新手直接看 **[QUICKSTART.md](QUICKSTART.md)**；我的完整实验记录在 **[pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md](pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md)**。
 >
-> **源码更新（v1.2.0 之后，未重发 zip）：** `service.sh` 增加 Pico3dResolution 兼容——每 30s 把 `sdk_eyebuffer` / `sdk_eyebufferX/Y` / `os_eyebuffer_*` 压回 2160，V-Sleep 生效或恢复期间让位。DTBO 镜像不在仓库，所以我没有重打 120Hz zip；重新构建时会自动带上。
+> **v1.2.1 更新：** `service.sh` 增加 Pico3dResolution 兼容——每 30s 把 `sdk_eyebuffer` / `sdk_eyebufferX/Y` / `os_eyebuffer_*` 压回 2160，V-Sleep 生效或恢复期间让位。另加模块目录外的开机回滚守卫：用 Magisk 的 remove（或直接删模块目录）卸载时，首次开机自动恢复原厂 DTBO + 90Hz 配置。**不要用 disable**——禁用不会重刷 DTBO，重新启用请重刷 zip。
 
 ### 我做了什么
 
@@ -42,7 +42,7 @@
 
 **安装（官方状态）**
 
-1. 下载 Release 里的 `pico4-120hz-v1.2.0.zip`。
+1. 下载 Release 里的 `pico4-120hz-v1.2.1.zip`。
 2. Magisk App → **模块** → **从本地安装** → 选择 zip。
 3. 重启。首次开机后屏幕可能闪一下——这是我安排的一次性面板时序重同步，正常。
 4. 进入系统后确认面板 120Hz（见下方“验证”）。
@@ -129,7 +129,7 @@ adb shell getprop sys.pvr.display.type
 
 ### 版本历史
 
-- **v1.2.0+ 源码（未重发 zip）**：`service.sh` 增加 Res3D 兼容——每 30s 把 `sdk_eyebuffer` / `sdk_eyebufferX/Y` / `os_eyebuffer_*` 压回 2160，V-Sleep 期间让位。
+- **v1.2.1（2026-10-20）**：`service.sh` 增加 Res3D 兼容——每 30s 把 `sdk_eyebuffer` / `sdk_eyebufferX/Y` / `os_eyebuffer_*` 压回 2160，V-Sleep 期间让位；zip 已重建。
 - **v1.2.0（2026-10-20）**：新增 Phoenix_ovs（国际版 b9666）支持；安装器按 stock DTBO 自动选择 CN/OVS 镜像与 stock 回滚镜像；CN 路径已完成真机回归。
 - **v1.1.0（2026-10-20）**：眼缓冲 2816→2160（FrmGpu 约减半）、`xrMiniVsyncBackStep=4` 修复底部撕裂、120Hz SDK 校准、CN 安装器升级/卸载支持、stock CN 回滚镜像。
 - **v1.0.0（2026-09-05）**：首个锁定 120Hz 发布（v6 DTBO + 速率映射 + 开机帧率修正）。
@@ -142,14 +142,14 @@ MIT License，见 [LICENSE](LICENSE)。仅供个人设备研究与自用；刷�
 
 ## English
 
-> **Current release: v1.2.0 (2026-10-20)**
+> **Current release: v1.2.1 (2026-10-20)**
 > I lock the PICO 4 (PICOA8110 / Phoenix, SHARP5K 4.93") panel at 120 Hz and fix the HMD-service mapping, 120 Hz SDK calibration, eye buffer and bottom-edge latch timing.
 > Supported: **CN (Phoenix) and Phoenix_ovs (international b9666)**, firmware **5.13.7**, Magisk.
 > Other international baselines (bee2b067) are not included in this release.
 >
 > New users: read **[QUICKSTART.md](QUICKSTART.md)**. My full experiment log: **[pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md](pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md)**.
 >
-> **Source update (after v1.2.0, zip not rebuilt):** `service.sh` now coordinates with Pico3dResolution — every 30 s it clamps `sdk_eyebuffer` / `sdk_eyebufferX/Y` / `os_eyebuffer_*` back to 2160, and yields while V-Sleep is active or restoring. The DTBO images are not in the repo, so I did not rebuild the 120 Hz zip; a rebuild picks this up automatically.
+> **v1.2.1 update:** `service.sh` now coordinates with Pico3dResolution — every 30 s it clamps `sdk_eyebuffer` / `sdk_eyebufferX/Y` / `os_eyebuffer_*` back to 2160, and yields while V-Sleep is active or restoring. A boot guard outside the module also restores the stock DTBO + 90 Hz config on the first boot after Magisk `remove` (or manual deletion). **Do not disable** — disabling does not re-flash the DTBO; reinstall the zip after re-enabling.
 
 ### What I changed
 
@@ -178,7 +178,7 @@ MIT License，见 [LICENSE](LICENSE)。仅供个人设备研究与自用；刷�
 
 **Fresh install**
 
-1. Download `pico4-120hz-v1.2.0.zip` from the Release.
+1. Download `pico4-120hz-v1.2.1.zip` from the Release.
 2. Magisk → **Modules** → **Install from storage** → select the zip.
 3. Reboot. The screen may blink once on the first boot — that is my one-shot panel resync.
 4. Verify 120 Hz (below).
@@ -245,7 +245,7 @@ If the fringing/haze is unacceptable, go back to stock 90 Hz; further blind pane
 - [QUALITY_120HZ_ANALYSIS.md](pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md) — my full quality/timing analysis
 - [RECOVERY.md](RECOVERY.md) — brick recovery and EDL
 - [HANDOVER-120HZ.md](HANDOVER-120HZ.md) — project handover and test checklist
-- v1.2.0+ source (zip not rebuilt): `service.sh` clamps `sdk_eyebuffer` / `sdk_eyebufferX/Y` / `os_eyebuffer_*` to 2160 every 30 s and yields to V-Sleep.
+- v1.2.1: `service.sh` clamps `sdk_eyebuffer` / `sdk_eyebufferX/Y` / `os_eyebuffer_*` to 2160 every 30 s, yields to V-Sleep; zip rebuilt.
 - v1.2.0: Phoenix_ovs (b9666) support, CN/OVS auto-selection.
 - v1.1.0: eye buffer 2160, `xrMiniVsyncBackStep=4`, 120 Hz calibration, upgrade/uninstall.
 - v1.0.0: first locked-120 Hz release.
@@ -256,14 +256,14 @@ MIT License — see [LICENSE](LICENSE). For personal research only; back up and 
 
 ## Русский
 
-> **Текущий релиз: v1.2.0 (2026-10-20)**
+> **Текущий релиз: v1.2.1 (2026-10-20)**
 > Я зафиксировал панель PICO 4 (PICOA8110 / Phoenix, SHARP5K 4.93") на 120 Гц и исправил отображение частот в HMD-сервисе, калибровку SDK для 120 Гц, буфер глаза и задержку защёлкивания нижней строки.
 > Поддержка: **CN (Phoenix) и Phoenix_ovs (международная b9666)**, прошивка **5.13.7**, Magisk.
 > Другие международные базовые прошивки (bee2b067) в релиз не входят.
 >
 > Для быстрого старта: **[QUICKSTART.md](QUICKSTART.md)**. Мой полный журнал экспериментов: **[pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md](pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md)**.
 >
-> **Обновление исходников (после v1.2.0, zip не пересобран):** `service.sh` теперь согласуется с Pico3dResolution — каждые 30 с возвращает `sdk_eyebuffer` / `sdk_eyebufferX/Y` / `os_eyebuffer_*` к 2160 и уступает, пока V-Sleep активен или восстанавливается. Образы DTBO не входят в репозиторий, поэтому я не пересобирал zip; при пересборке это попадёт автоматически.
+> **Обновление v1.2.1:** `service.sh` теперь согласуется с Pico3dResolution — каждые 30 с возвращает `sdk_eyebuffer` / `sdk_eyebufferX/Y` / `os_eyebuffer_*` к 2160 и уступает, пока V-Sleep активен или восстанавливается. Сторож в `service.d` вне модуля также возвращает стоковый DTBO и конфиг 90 Гц при первом запуске после Magisk `remove` (или ручного удаления). **Не отключайте модуль** — disable не перезаписывает DTBO; после включения прошейте zip заново.
 
 ### Что я изменил
 
@@ -292,7 +292,7 @@ MIT License — see [LICENSE](LICENSE). For personal research only; back up and 
 
 **Чистая установка**
 
-1. Скачайте `pico4-120hz-v1.2.0.zip` из Release.
+1. Скачайте `pico4-120hz-v1.2.1.zip` из Release.
 2. Magisk → **Модули** → **Установить из хранилища** → выберите zip.
 3. Перезагрузитесь. При первой загрузке экран может моргнуть — это моя одноразовая пересинхронизация панели.
 4. Проверьте 120 Гц (ниже).
@@ -359,7 +359,7 @@ adb shell getprop sys.pvr.display.type
 - [QUALITY_120HZ_ANALYSIS.md](pico4-display-analysis/QUALITY_120HZ_ANALYSIS.md) — мой полный анализ качества/таймингов
 - [RECOVERY.md](RECOVERY.md) — восстановление и EDL
 - [HANDOVER-120HZ.md](HANDOVER-120HZ.md) — передача проекта и чек-лист
-- v1.2.0+ исходники (zip не пересобран): `service.sh` каждые 30 с возвращает `sdk_eyebuffer` / `sdk_eyebufferX/Y` / `os_eyebuffer_*` к 2160 и уступает V-Sleep.
+- v1.2.1: `service.sh` каждые 30 с возвращает `sdk_eyebuffer` / `sdk_eyebufferX/Y` / `os_eyebuffer_*` к 2160 и уступает V-Sleep; zip пересобран.
 - v1.2.0: поддержка Phoenix_ovs (b9666), авто-выбор CN/OVS.
 - v1.1.0: буфер глаза 2160, `xrMiniVsyncBackStep=4`, калибровка 120 Гц, обновление/удаление.
 - v1.0.0: первый релиз с фиксированными 120 Гц.

@@ -7,7 +7,7 @@ POSTFSDATA=true
 LATESTARTSERVICE=true
 
 ui_print "======================================"
-ui_print "  Pico4 120Hz Display Unlock v1.2.0"
+ui_print "  Pico4 120Hz Display Unlock v1.2.1"
 ui_print "======================================"
 
 # Firmware gate, component-wise. 5.13.7 ships under several device-tree
@@ -144,6 +144,59 @@ stock_img_hash=$(sha256_file "$stock_src") || abort "Unable to hash bundled $STO
 cp "$stock_src" "$MODPATH/dtbo-stock.img" || abort "Failed to stage the stock dtbo"
 chmod 644 "$MODPATH/dtbo-stock.img"
 
+# Magisk's `remove` flag (and deleting the module dir by hand) removes the
+# module WITHOUT running uninstall.sh. That would leave the 120Hz DTBO on a
+# 90Hz config after a reboot. Keep a stock image and a service.d guard outside
+# the module so the first boot after removal restores the stock DTBO itself.
+cp "$stock_src" /data/adb/pico4_120hz_stock.img || abort "Failed to stage the rollback guard image"
+chmod 600 /data/adb/pico4_120hz_stock.img
+mkdir -p /data/adb/service.d
+cat > /data/adb/service.d/pico4_120hz_rollback.sh <<'EOS'
+#!/system/bin/sh
+(
+    until [ "$(getprop sys.boot_completed)" = "1" ]; do sleep 1; done
+    sleep 5
+    MOD=/data/adb/modules/pico4_120hz
+    if [ -d "$MOD" ] && [ ! -e "$MOD/remove" ] && [ ! -e "$MOD/disable" ]; then
+        exit 0
+    fi
+    STOCK=/data/adb/pico4_120hz_stock.img
+    [ -f "$STOCK" ] || exit 1
+    hash=$(/system/bin/toybox sha256sum -b "$STOCK" 2>/dev/null | cut -d' ' -f1)
+    case "$hash" in
+        307e702182e731b76e8bc0a4aec131a53e1ddf82e96f2f416e2f49129e6d46ac|\
+        f4d6073c669d81aa0a811ea4476f7a89d01bf8975a931d2b2548f237a2cda992) ;;
+        *) exit 1 ;;
+    esac
+    /system/bin/dd if="$STOCK" of=/dev/block/by-name/dtbo bs=4096 >/dev/null 2>&1
+    sync
+    now=$(/system/bin/toybox sha256sum -b /dev/block/by-name/dtbo 2>/dev/null | cut -d' ' -f1)
+    case "$now" in
+        307e702182e731b76e8bc0a4aec131a53e1ddf82e96f2f416e2f49129e6d46ac|\
+        f4d6073c669d81aa0a811ea4476f7a89d01bf8975a931d2b2548f237a2cda992) ;;
+        *) exit 1 ;;
+    esac
+    setcfg() {
+        service call ConfigurationService 4 s16 "$1" i32 0 s16 "$2" s16 "" s16 "" i32 1 >/dev/null 2>&1
+    }
+    setcfg com.picovr.settings sdk_refreshRate,90
+    setcfg com.picovr.settings sdk_Recommand_refreshRate,90
+    setcfg pxr_config_package displayRefreshRate,72
+    setcfg pxr_config_package sdk_eyebufferX,2816
+    setcfg pxr_config_package sdk_eyebufferY,2816
+    setcfg android os_eyebuffer_width,0
+    setcfg android os_eyebuffer_height,0
+    setprop persist.pvr.display.type jdi49390
+    setprop sys.pvr.display.type 72.000000
+    [ "$(getprop persist.pvr.config.eyebuffer_width)" = "2160" ] && setprop persist.pvr.config.eyebuffer_width ""
+    [ "$(getprop persist.pvr.config.eyebuffer_height)" = "2160" ] && setprop persist.pvr.config.eyebuffer_height ""
+    rm -f /data/misc/pxr/canary/config/pxr_config.txt /sdcard/psmart/canary/pxr_config.txt
+    log -t pico4_120hz "rollback guard: stock dtbo + 90Hz config restored"
+    if [ ! -d "$MOD" ]; then rm -f "$0"; fi
+) &
+EOS
+chmod 755 /data/adb/service.d/pico4_120hz_rollback.sh
+
 if [ "$NEED_FLASH" = "1" ]; then
     ui_print "- Stock dtbo detected, backing up"
     BACKUP="/sdcard/Download/pico4-dtbo-stock-backup.img"
@@ -181,6 +234,7 @@ ui_print " Reboot to apply. Panel runs 120Hz."
 ui_print " A screen blink seconds after boot is"
 ui_print " the automatic panel resync - expected."
 ui_print " Upgrade: install this zip over v1.0.0."
-ui_print " Uninstall: Magisk -> remove module;"
-ui_print " uninstall.sh restores the stock dtbo."
+ui_print " Uninstall: safe even via Magisk remove;"
+ui_print " a boot guard restores the stock dtbo."
+ui_print " Do not disable; uninstall or reinstall."
 ui_print "======================================"
