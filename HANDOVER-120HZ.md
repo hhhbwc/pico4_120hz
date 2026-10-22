@@ -9,7 +9,17 @@
 > CN 真机回归已完成：stock → v1.0.0/v1.1.0 升级、stock 全新安装、uninstall → stock 恢复；
 > **OVS 仍未做物理机回归**（镜像离线校验通过）。安装、升级、卸载和回滚见 [README.md](README.md) 与 [QUICKSTART.md](QUICKSTART.md)。
 >
-> **发布可复现性缺口（未解）**：本机已无 Phoenix_ovs 的两张镜像（120 的 `dtbo-120hz-v6-kona-mtp.img` = `d138d5d6…`、stock 的 `dtbo-stock-phoenix_ovs.img` = `f4d6073c…`），所以 `build_zip.py` 现在只能跑到 CN 路径就报缺图；已给它加 `--dtbo-ovs / --stock-cn / --stock-ovs` 参数，在有图的重打包机上可直接指过去。`module.prop` 此前停在 v1.2.0/4（发布包里已是 v1.2.1/5），已对齐，`build_zip.py` 的产物名改为从 `module.prop` 读取，`audit_selector.py` 不再钉死版本串、改为比对安装器横幅与 `module.prop`。
+> **发布可复现性（2026-10-22 实测闭环）**：本机磁盘上确实没有 Phoenix_ovs 的两张镜像（120 的 `dtbo-120hz-v6-kona-mtp.img` = `d138d5d6…`、stock 的 `dtbo-stock-phoenix_ovs.img` = `f4d6073c…`），但它们就在那份已发布的 zip 里，从 Release 资产解出来即可用：
+>
+> ```bash
+> unzip -j pico4-120hz-v1.2.1.zip 'dtbo-*.img' -d imgs/
+> python pico-refresh-selector/magisk-module/build_zip.py \
+>   --dtbo-cn imgs/dtbo-cn.img --dtbo-ovs imgs/dtbo-ovs.img \
+>   --stock-cn imgs/dtbo-stock-cn.img --stock-ovs imgs/dtbo-stock-ovs.img \
+>   --out rebuilt.zip
+> ```
+>
+> 实测结果：重建包与线上发布包 **13 个条目内容逐字节全等**（权限位与 LF 归一化也一致）。为此 `build_zip.py` 的四个镜像路径已做成命令行参数，产物名从 `module.prop` 解析。`module.prop` 此前停在 v1.2.0/4（发布包里已是 v1.2.1/5），已对齐；`audit_selector.py` 不再钉死版本串、改为比对安装器横幅与 `module.prop`（反向测试：只改一处会立刻 FAIL）。
 
 ## 1. 当前结论
 
@@ -187,8 +197,9 @@ pico-refresh-selector/magisk-module/
 pico-refresh-selector/magisk-module/build_zip.py
 pico4-display-analysis/build_120_ovs.py
 # 产物 pico4-display-analysis/pico4-120hz-v1.2.1.zip 不入库，按需构建
-# 本机缺 dtbo-120hz-v6-kona-mtp.img(d138d5d6) 与 dtbo-stock-phoenix_ovs.img(f4d6073c)，
-# 所以 build_zip.py 只能验到 CN 路径；有这两张图的机器用 --dtbo-ovs / --stock-ovs 指过去
+# 本机没有 dtbo-120hz-v6-kona-mtp.img(d138d5d6) 与 dtbo-stock-phoenix_ovs.img(f4d6073c)，
+# 但两者可从 Release 资产 pico4-120hz-v1.2.1.zip 解出（unzip -j 'dtbo-*.img'），
+# 用 --dtbo-ovs / --stock-cn / --stock-ovs 指过去即可完整重打包；已验证重打包与发布包逐条目全等
 ```
 
 ### 物理验证
