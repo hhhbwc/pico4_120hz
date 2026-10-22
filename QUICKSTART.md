@@ -1,7 +1,7 @@
 # PICO 4 120Hz 快速上手
 
-> 适用于 **PICO 4 CN（PICOA8110 / Phoenix）** 与 **Phoenix_ovs（国际版 b9666）**、固件 **5.13.7**、面板 **SHARP5K**、已装 **Magisk**。
-> 其他国际基线（bee2b067）不在本发布内。刷机有风险，先读完“回滚”再动手。
+> 适用于 **PICO 4 CN（PICOA8110 / Phoenix）** 与 **Phoenix_ovs（国际版 b9666）**、固件 **5.13.7**、面板 **SHARP5K（Sharp LS026B3SA）**、已装 **Magisk**。
+> 其他国际基线（bee2b067）不在本发布内。面板供应商不统一，`ro.pvr.hmd.type` 不是 SHARP5K 的机器一律不要安装（社区反馈过 Innolux 等其它面板，原因见 [README.md](README.md) 开头的说明）。刷机有风险，先读完“回滚”再动手。
 
 ---
 
@@ -26,7 +26,7 @@ adb shell getprop ro.pvr.hmd.type       # SHARP5K
 
 ## 2. 安装
 
-1. 从 Releases 下载 **`pico4-120hz-v1.1.0.zip`**。
+1. 从 Releases 下载 **`pico4-120hz-v1.2.1.zip`**。
 2. 打开 Magisk App → **模块** → **从本地安装**。
 3. 选择 zip，等待安装完成。
 4. 重启头显。
@@ -65,9 +65,9 @@ adb shell getprop sys.pvr.display.type
 
 ---
 
-## 5. 从 v1.0.0 升级
+## 5. 从 v1.0.0 / v1.1.0 升级
 
-**不需要先卸载。** 直接把 v1.2.0 zip 在 Magisk 里覆盖安装，然后重启：
+**不需要先卸载。** 直接把 v1.2.1 zip 在 Magisk 里覆盖安装，然后重启：
 
 - 安装器识别 v1.0.0/v1.1.0 的旧 lib/DTBO，不会重刷分区；
 - 新的 120Hz 校准、眼缓冲 2160、`xrMiniVsyncBackStep=4` 会生效；
@@ -93,17 +93,19 @@ adb shell getprop sys.pvr.display.type
 1. 先强制重启或电源键熄屏再亮。
 2. 能进系统：用 Magisk 安全模式/App 移除模块。
 3. 卡 bootloader：
-   - 不要用 `fastboot flash`（没有 critical partition 的 unlocktoken 权限）；
+   - 不要用 `fastboot flash`（本机 bootloader 没有 critical partition 的 unlocktoken 权限）；
    - 进 EDL（Vol Up + Vol Down + Power）；
-   - 用 `edl-ng read-part dtbobak` 读出本机原厂槽，确认镜像 `307e7021…`、大小 24 MiB；
-   - `edl-ng write-part dtbo dtbo-stock-5.13.7.img`，读回校验，`reset`。
+   - 用 `edl-ng read-part dtbobak` 读出本机原厂槽，确认它 SHA-256 = `307e7021…`（CN）/ `f4d6073c…`（Phoenix_ovs）、大小为 25,165,824 字节（24 MiB）；
+   - 就用这份读回来的原厂镜像写回：`edl-ng write-part dtbo <已确认的原厂.img>`，读回校验，再 `reset`；
+   - 本仓库不附带任何 `.img`（`.gitignore` 已排除）；安装模块的 zip 里自带 `dtbo-stock-cn.img` / `dtbo-stock-ovs.img` 可作对照。**不要**拿 `dtbo-stock-cn-5.13.7.img` 当原厂——它只有 8 MiB（`ffd65209…`）是不完整的截断副本，写进去开不了机。
    - 详见 [RECOVERY.md](RECOVERY.md)。
 
 ### 安装器 abort
 
-- **Unknown dtbo baseline**：当前 DTBO 不在已知列表。先用 EDL/官方固件恢复 stock，再安装。
-- **CN-only / INTL**：本发布只支持 CN，不要强刷。
-- **lib mismatch**：系统库不是 5.13.7 原版或旧版补丁库，先恢复官方固件。
+- **Unknown dtbo baseline**：当前 DTBO 不在已知列表（固件不对或已被改动）。先用 EDL/官方固件恢复 stock，再安装。
+- **Unsupported global dtbo baseline**：本发布只内置 CN 与 Phoenix_ovs（b9666）两套镜像，其它国际基线不要强刷。
+- **Unsupported panel / device / firmware**：面板不是 `SHARP5K`、机型不是 `PICOA8110`、或固件不是 `5.13.7*`。面板供应商不统一，非 Sharp 面板不在支持范围（见 README 开头）；把这三条 prop 的值发到 issue 即可。
+- **Stock libpxrhmdservice.so mismatch**：系统里的库既不是 5.13.7 原版，也不是已接受的旧补丁版，先恢复官方固件。
 
 ### 仍是 72Hz
 
@@ -123,7 +125,7 @@ adb shell getprop sys.pvr.display.type
 - 其他国际基线（bee2b067）不支持；CN 与 Phoenix_ovs（b9666）已打包。
 - Phoenix_ovs 镜像已完成离线校验（entry 6 + 面板子树），但尚未在物理 OVS 机上做刷机回归；首次 OVS 安装请保留 stock 备份。
 
-如果蓝边/发雾无法接受，建议回官方 90Hz。
+如果蓝紫描边/发雾无法接受，建议回官方 90Hz。
 
 ---
 

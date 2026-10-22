@@ -7,7 +7,7 @@
 ## 中文
 
 > **当前发布：v1.2.1（2026-10-20）**
-> 我把 PICO 4（PICOA8110 / Phoenix，SHARP5K 4.93"）的面板锁定在 120Hz，并配套改了 HMD 服务、SDK 校准、眼缓冲和底部锁存时序。
+> 我把 PICO 4（PICOA8110 / Phoenix）的 Sharp LS026B3SA 面板（`ro.pvr.hmd.type=SHARP5K`，单眼 2160×2160）锁定在 120Hz，并配套改了 HMD 服务、SDK 校准、眼缓冲和底部锁存时序。
 > 支持 **CN（Phoenix）与 Phoenix_ovs（国际版 b9666）**、固件 **5.13.7**、Magisk。
 > 其他国际基线（bee2b067）不在本发布内。
 >
@@ -15,7 +15,7 @@
 >
 > **v1.2.1 更新：** `service.sh` 增加 Pico3dResolution 兼容——每 30s 把 `sdk_eyebuffer` / `sdk_eyebufferX/Y` / `os_eyebuffer_*` 压回 2160，V-Sleep 生效或恢复期间让位。另加模块目录外的开机回滚守卫：用 Magisk 的 remove（或直接删模块目录）卸载时，首次开机自动恢复原厂 DTBO + 90Hz 配置。**不要用 disable**——禁用不会重刷 DTBO，重新启用请重刷 zip。
 >
-> **⚠️ 面板供应商/规格不统一（社区反馈，不是我的实测）。** 有人的 P4 是 Sharp 面板、规格可到 120Hz；有人的 P4 Pro 是 Innolux 面板、只能 90Hz；还有人说见过 P4 的三种面板。**本项目的机型是 PICO 4（PICOA8110 / Phoenix），面板 Sharp LS026B3SA（`ro.pvr.hmd.type=SHARP5K`），驱动 IC 是 Novatek NT57900**——这一条是逐哈希验证过的。两点与我实测有出入：① 这块 Sharp 的"可到 120"指面板硬件能扫，但原厂 DTBO 里它只有 90Hz 一个 timing 节点、NT57900 的 120 序列只是 53 字节占位，本项目的 120Hz 属超频，所以蓝紫描边/发雾在 DTBO 层消不掉；② 同一份原厂 DTBO 里的 `innolux_nt57900_90_video` 节点（同 2160×2160、同 DSC 拓扑、同 NT57900）**反而带完整的 72/90/120 三档 on-command 查表**（`ff` 页；与 Sharp 的 `b9` 页地址空间不同，值不可互搬），所以 Innolux 机型是否"只能 90Hz"我无法确认。安装器对 `ro.pvr.hmd.type != SHARP5K` 一律 abort，非 Sharp 面板机型不在支持范围——请只回帖这几项，不要刷本模块：`ro.product.device`、`ro.build.id`、`ro.pvr.hmd.type`、`sys.pvr.display.type`、`sha256sum /dev/block/by-name/dtbo`。
+> **⚠️ 面板供应商/规格不统一（社区反馈，不是我的实测）。** 有人的 P4 是 Sharp 面板、规格可到 120Hz；有人的 P4 Pro 是 Innolux 面板、只能 90Hz；还有人说见过 P4 的三种面板。**本项目的机型是 PICO 4（PICOA8110 / Phoenix），面板 Sharp LS026B3SA（`ro.pvr.hmd.type=SHARP5K`），驱动 IC 是 Novatek NT57900**——机型、面板标识、原厂 DTBO 与 lib 哈希都由安装器逐项校验。两点与我的实测有出入：① “Sharp 可到 120”说的是面板硬件能扫更快，但原厂 DTBO 里这块面板只有一个 90Hz timing 节点，它的 `post-120-nt57900-on-command` 只是 53 字节的补充命令、不是完整的 120Hz 配置；本项目的 120Hz 属超频，所以蓝紫描边/发雾在 DTBO 层消不掉。② 同一份原厂 DTBO 里的 `innolux_nt57900_90_video` 节点（同样 2160×2160/眼、同 DSC 拓扑、同 NT57900）**反而带完整的 72/90/120 三档 on-command 查表**（`ff` 页；与 Sharp 的 `b9` 页地址空间不同，值不可互搬），所以“Innolux 只能 90Hz”我无法确认。安装器对 `ro.pvr.hmd.type != SHARP5K` 一律 abort，非 Sharp 面板机型不在支持范围——请只回帖这几项，不要刷本模块：`ro.product.device`、`ro.build.id`、`ro.pvr.hmd.type`、`sys.pvr.display.type`、`sha256sum /dev/block/by-name/dtbo`。
 
 ### 我做了什么
 
@@ -30,7 +30,7 @@
 | 升级 | 支持从 v1.0.0 / v1.1.0 直接覆盖安装 |
 | 卸载 | `uninstall.sh` 恢复对应变体的原厂 DTBO、清理 canary 配置、恢复 ConfigurationService 与 props |
 
-**我的实测（v1.2.0，离头/桌面场景）**：`FrmGpu` 中位约 **13–15ms**，引擎约 **65–73fps**，`VsyncDelay` 2–3；v1.0.0 同场景约 27–30ms / 30fps。
+**我的实测（v1.2.0，摘下头显的桌面场景）**：`FrmGpu` 中位约 **13–15ms**，引擎约 **65–73fps**，`VsyncDelay` 2–3；v1.0.0 同场景约 27–30ms / 30fps。
 
 ### 支持范围
 
@@ -42,7 +42,7 @@
 
 ### 安装 / 升级 / 卸载
 
-**安装（官方状态）**
+**全新安装（出厂状态）**
 
 1. 下载 Release 里的 `pico4-120hz-v1.2.1.zip`。
 2. Magisk App → **模块** → **从本地安装** → 选择 zip。
@@ -58,7 +58,7 @@
 
 **从 v1.0.0 / v1.1.0 升级**
 
-直接把 v1.2.0 zip 覆盖安装即可，不需要先卸载：
+直接把 v1.2.1 zip 覆盖安装即可，不需要先卸载：
 
 - 安装器接受旧 lib（`32427922…`）和旧 DTBO（`f0c10d1d…`），不会重刷分区；
 - 新补丁 lib、`xrMiniVsyncBackStep=4`、眼缓冲 2160 和 120 校准会在重启后生效；
@@ -71,7 +71,7 @@
 3. 卸载脚本会用模块内置的对应变体 stock 镜像（CN `307e7021…` / OVS `f4d6073c…`，或安装时的备份）恢复 DTBO，重置 `sdk_refreshRate` / `sdk_Recommand_refreshRate` / `displayRefreshRate` / 眼缓冲 / `persist.pvr.display.type`，删除 canary 配置，并在 `/data/adb/service.d/` 放一个一次性清理脚本。
 4. 重启后应回到官方 72Hz（系统设置里仍可选 90Hz）。
 
-> 如果 `/sdcard/Download/pico4-dtbo-stock-backup.img` 丢失，模块内的 `dtbo-stock.img` 仍是可验证的对应变体原厂镜像；两者都缺失时用 EDL 读 `dtbobak` 或官方固件回滚（见下）。
+> 如果 `/sdcard/Download/pico4-dtbo-stock-backup.img` 丢失，模块目录里的 `/data/adb/modules/pico4_120hz/dtbo-stock.img`（安装器按变体从 zip 内 `dtbo-stock-cn.img` / `dtbo-stock-ovs.img` 复制而来）仍是可校验的原厂镜像；两者都缺失时用 EDL 读 `dtbobak` 或官方固件回滚（见下）。
 
 ### 验证 120Hz
 
@@ -99,14 +99,14 @@ adb shell getprop sys.pvr.display.type
 2. **整体画面有轻微发白/发雾**。这是 90Hz gamma/VCOM 标定被推到 120Hz 的基线代价；比早期 `e5d5` 候选的严重白滤镜轻得多（那个是错误写入 E5/D5 导致的，已排除）。
 3. **不保证所有应用都跑满 120fps**。面板扫描是 120Hz，应用渲染由 GPU 决定；我通过把眼缓冲降到 2160 大幅改善了帧时序，但重负载场景仍可能低于 72fps。
 4. **其他 global 基线（bee2b067）不支持**。CN 与 Phoenix_ovs（b9666）已打包；未知基线会安全 abort，不写分区。
-5. **Phoenix_ovs 尚未物理机回归**。OVS 120 镜像由官方 b9666 包构建，entry 6 补丁与面板子树已离线校验（与 CN v6 逐字节一致），但我在本发布只在 CN 真机上完成了刷机/升级/卸载回归；首次 OVS 安装请保留 stock 备份。
+5. **Phoenix_ovs 尚未物理机回归**。OVS 120 镜像由官方 b9666 包构建，entry 6 补丁与面板子树已离线校验（与 CN v6 逐字节一致），但本发布只在 CN 真机上完成了刷机/升级/卸载回归；首次 OVS 安装请保留 stock 备份。
 6. **不要实时切换刷新率**。离开 120 的 DFPS 切换会黑屏；我的模块锁定 120。
 
-如果蓝边/发雾无法接受，建议回官方 90Hz；继续盲写面板寄存器收益很低。
+如果蓝紫描边/发雾无法接受，建议回官方 90Hz；继续盲写面板寄存器收益很低。
 
 ### 故障排查 / 恢复
 
-- **开机黑屏、卡 bootloader**：先强制重启或电源键熄屏再亮；能进系统就用 Magisk 安全模式/App 移除模块。卡 bootloader 时进 EDL（Vol Up + Vol Down + Power），用 `edl-ng read-part dtbobak` 读本机原厂槽，确认 `dtbo-stock-5.13.7.img`（`307e7021…`）后 `write-part dtbo`。详见 [RECOVERY.md](RECOVERY.md)。
+- **开机黑屏、卡 bootloader**：先强制重启或电源键熄屏再亮；能进系统就用 Magisk 安全模式/App 移除模块。卡 bootloader 时进 EDL（Vol Up + Vol Down + Power），用 `edl-ng read-part dtbobak` 读本机原厂槽，确认读到的镜像是 **25,165,824 字节**且 SHA-256 = `307e7021…`（CN）/ `f4d6073c…`（Phoenix_ovs）后再 `write-part dtbo`。本仓库不附带任何 `.img`（`.gitignore` 已排除），需要现成文件就从安装包里取 `dtbo-stock-cn.img` / `dtbo-stock-ovs.img`，或用官方固件包；**别把 `dtbo-stock-cn-5.13.7.img` 当原厂**（它只有 8 MiB、`ffd65209…`，是不完整的截断副本，写进去开不了机）。详见 [RECOVERY.md](RECOVERY.md)。
 - **安装器 abort: Unknown dtbo baseline**：当前 DTBO 不是已知的 stock/v6/vfp14/OVS 基线。先用 EDL/官方固件恢复 stock，再安装。
 - **安装器 abort: Unsupported global**：该国际基线不在本发布内；不要强刷 CN/OVS 镜像。
 
@@ -116,7 +116,7 @@ adb shell getprop sys.pvr.display.type
 - 写 `dtbo` 前必须确认镜像大小为 **25,165,824 字节（24 MiB）**，并读回校验 SHA-256。
 - 回滚前先读同机 `dtbobak` 槽做真值对照；`dtbobak` 是工程 abl 建的原厂备份槽，从未被写过。
 - 不要用 `fastboot flash` 写本机的 critical 分区（unlocktoken 缺失）。
-- 刷机前备份 `/sdcard/Download/pico4-dtbo-stock-backup.img`。
+- 刷机前确认已有原厂 DTBO 备份（安装器会自动存到 `/sdcard/Download/pico4-dtbo-stock-backup.img`）。
 
 ### 技术文档
 
@@ -145,7 +145,7 @@ MIT License，见 [LICENSE](LICENSE)。仅供个人设备研究与自用；刷�
 ## English
 
 > **Current release: v1.2.1 (2026-10-20)**
-> I lock the PICO 4 (PICOA8110 / Phoenix, SHARP5K 4.93") panel at 120 Hz and fix the HMD-service mapping, 120 Hz SDK calibration, eye buffer and bottom-edge latch timing.
+> I lock the PICO 4 (PICOA8110 / Phoenix, panel SHARP5K = Sharp LS026B3SA, 2160×2160 per eye) at 120 Hz and fix the HMD-service mapping, 120 Hz SDK calibration, eye buffer and bottom-edge latch timing.
 > Supported: **CN (Phoenix) and Phoenix_ovs (international b9666)**, firmware **5.13.7**, Magisk.
 > Other international baselines (bee2b067) are not included in this release.
 >
@@ -153,7 +153,7 @@ MIT License，见 [LICENSE](LICENSE)。仅供个人设备研究与自用；刷�
 >
 > **v1.2.1 update:** `service.sh` now coordinates with Pico3dResolution — every 30 s it clamps `sdk_eyebuffer` / `sdk_eyebufferX/Y` / `os_eyebuffer_*` back to 2160, and yields while V-Sleep is active or restoring. A boot guard outside the module also restores the stock DTBO + 90 Hz config on the first boot after Magisk `remove` (or manual deletion). **Do not disable** — disabling does not re-flash the DTBO; reinstall the zip after re-enabling.
 >
-> **⚠️ Panel suppliers/specs are not uniform (community reports, not my measurements).** Some P4 units have a Sharp panel whose spec reaches 120 Hz; some P4 Pro units have an Innolux panel limited to 90 Hz; one person claims three different panels across P4. **This project's unit is a PICO 4 (PICOA8110 / Phoenix) with a Sharp LS026B3SA panel (`ro.pvr.hmd.type=SHARP5K`) and a Novatek NT57900 driver IC** — that part is hash-verified. Two points differ from my own measurements: (1) "Sharp can do 120" describes the panel hardware scanning faster, but in the stock DTBO this panel has only a single 90 Hz timing node and its NT57900 120 sequence is a 53-byte placeholder — my 120 Hz is an overclock, which is why the blue/purple fringing and haze cannot be removed at DTBO level; (2) the `innolux_nt57900_90_video` node in the *same* stock DTBO (same 2160×2160, same DSC topology, same NT57900) actually ships a **complete 72/90/120 three-tier on-command table** (`ff` page; different address space from Sharp's `b9` page, values are not transplantable), so I cannot confirm that Innolux units are limited to 90 Hz. The installer aborts on `ro.pvr.hmd.type != SHARP5K`; non-Sharp panels are unsupported — please just post `ro.product.device`, `ro.build.id`, `ro.pvr.hmd.type`, `sys.pvr.display.type` and `sha256sum /dev/block/by-name/dtbo` instead of flashing.
+> **⚠️ Panel suppliers/specs are not uniform (community reports, not my measurements).** Some P4 units have a Sharp panel whose spec reaches 120 Hz; some P4 Pro units have an Innolux panel limited to 90 Hz; one person claims three different panels across P4. **This project's unit is a PICO 4 (PICOA8110 / Phoenix) with a Sharp LS026B3SA panel (`ro.pvr.hmd.type=SHARP5K`) and a Novatek NT57900 driver IC** — device, panel id, stock DTBO and lib hashes are all verified by the installer. Two points differ from my measurements: (1) "Sharp can do 120" means the panel hardware can scan faster, but in the stock DTBO this panel has only a single 90 Hz timing node and its `post-120-nt57900-on-command` is a 53-byte supplemental command, not a complete 120 Hz configuration — my 120 Hz is an overclock, which is why the blue/purple fringing and haze cannot be removed at DTBO level. (2) The `innolux_nt57900_90_video` node in the *same* stock DTBO (also 2160×2160 per eye, same DSC topology, same NT57900) actually ships a **complete 72/90/120 three-tier on-command table** (`ff` page; different address space from Sharp's `b9` page, values are not transplantable), so I cannot confirm that Innolux units are limited to 90 Hz. The installer aborts on `ro.pvr.hmd.type != SHARP5K`; non-Sharp panels are unsupported — please just post `ro.product.device`, `ro.build.id`, `ro.pvr.hmd.type`, `sys.pvr.display.type` and `sha256sum /dev/block/by-name/dtbo` instead of flashing.
 
 ### What I changed
 
@@ -196,7 +196,7 @@ My installer will:
 
 **Upgrade from v1.0.0 / v1.1.0**
 
-Install the v1.2.0 zip over the existing module, then reboot. My installer accepts the old lib (`32427922…`) and old DTBO (`f0c10d1d…`), skips the partition write, and keeps the stock backup for a later uninstall.
+Install the v1.2.1 zip over the existing module, then reboot. My installer accepts the old lib (`32427922…`) and old DTBO (`f0c10d1d…`), skips the partition write, and keeps the stock backup for a later uninstall.
 
 **Uninstall / restore stock**
 
@@ -221,7 +221,7 @@ adb shell getprop sys.pvr.display.type
 ### Known limitations
 
 1. **Blue/purple fringing at 2D app edges remains.** It is the panel's 120 Hz analog/charge-calibration limit; `screencap` is clean. None of my DTBO candidates (`b0both`, `panel-b0`, `vfp14`, `e5d5`) or CA toggles changed it.
-2. **A slight overall white/haze remains.** It is the baseline cost of running the 90 Hz gamma/VCOM calibration at 120 Hz, much milder than the early `e5d5` white filter (that was a wrong E5/D5 write and was rolled back).
+2. **A slight overall washed-out haze remains.** It is the baseline cost of running the 90 Hz gamma/VCOM calibration at 120 Hz, much milder than the early `e5d5` white filter (that was a wrong E5/D5 write and was rolled back).
 3. **Not every app reaches 120 fps.** The scanout is 120 Hz; the app rate is GPU-bound. My 2160 eye-buffer clamp greatly improves frame pacing, but heavy scenes can still fall below 72 fps.
 4. **Other global baselines (bee2b067) are not supported.** CN and Phoenix_ovs (b9666) are bundled; unknown baselines abort safely without touching the partition.
 5. **Phoenix_ovs is not yet physically regression-tested.** I built the OVS 120 image from the official b9666 package and validated entry 6 + the panel subtree (byte-identical to CN v6) offline; this release was flash/upgrade/uninstall-tested on a CN unit only. Keep the stock backup for the first OVS install.
@@ -231,7 +231,7 @@ If the fringing/haze is unacceptable, go back to stock 90 Hz; further blind pane
 
 ### Recovery
 
-- **Black screen / bootloader:** force a reboot or power-cycle; if Android boots, remove the module via Magisk safe mode/App. If stuck in the bootloader, enter EDL (Vol Up + Vol Down + Power), read the unit's `dtbobak` slot with `edl-ng read-part`, verify the stock image (`307e7021…`), then `write-part dtbo`. See [RECOVERY.md](RECOVERY.md).
+- **Black screen / bootloader:** force a reboot or power-cycle; if Android boots, remove the module via Magisk safe mode/App. If stuck in the bootloader, enter EDL (Vol Up + Vol Down + Power), read the unit's `dtbobak` slot with `edl-ng read-part`, and confirm the image is **25,165,824 bytes** with SHA-256 `307e7021…` (CN) / `f4d6073c…` (Phoenix_ovs) before `write-part dtbo`. This repo ships no `.img` files (gitignored) — take `dtbo-stock-cn.img` / `dtbo-stock-ovs.img` out of the installer zip or use the official firmware package; **do not use `dtbo-stock-cn-5.13.7.img`** (8 MiB, `ffd65209…`, an incomplete truncated dump — writing it will not boot). See [RECOVERY.md](RECOVERY.md).
 - **Installer abort — unknown DTBO baseline:** restore the official stock DTBO first.
 - **Installer abort — unsupported global:** that baseline is not bundled; do not force a CN/OVS image.
 
@@ -261,7 +261,7 @@ MIT License — see [LICENSE](LICENSE). For personal research only; back up and 
 ## Русский
 
 > **Текущий релиз: v1.2.1 (2026-10-20)**
-> Я зафиксировал панель PICO 4 (PICOA8110 / Phoenix, SHARP5K 4.93") на 120 Гц и исправил отображение частот в HMD-сервисе, калибровку SDK для 120 Гц, буфер глаза и задержку защёлкивания нижней строки.
+> Я зафиксировал на 120 Гц панель PICO 4 (PICOA8110 / Phoenix) — Sharp LS026B3SA (`ro.pvr.hmd.type=SHARP5K`), 2160×2160 на глаз — и исправил отображение частот в HMD-сервисе, калибровку SDK для 120 Гц, буфер глаза и задержку защёлкивания нижней строки.
 > Поддержка: **CN (Phoenix) и Phoenix_ovs (международная b9666)**, прошивка **5.13.7**, Magisk.
 > Другие международные базовые прошивки (bee2b067) в релиз не входят.
 >
@@ -269,7 +269,7 @@ MIT License — see [LICENSE](LICENSE). For personal research only; back up and 
 >
 > **Обновление v1.2.1:** `service.sh` теперь согласуется с Pico3dResolution — каждые 30 с возвращает `sdk_eyebuffer` / `sdk_eyebufferX/Y` / `os_eyebuffer_*` к 2160 и уступает, пока V-Sleep активен или восстанавливается. Сторож в `service.d` вне модуля также возвращает стоковый DTBO и конфиг 90 Гц при первом запуске после Magisk `remove` (или ручного удаления). **Не отключайте модуль** — disable не перезаписывает DTBO; после включения прошейте zip заново.
 >
-> **⚠️ Поставщики и характеристики панелей неодинаковы (сообщения сообщества, не мои замеры).** У некоторых P4 стоит Sharp-панель со спецификацией до 120 Гц; у некоторых P4 Pro — панель Innolux, ограниченная 90 Гц; есть утверждение, что в P4 встречается три вида панелей. **В этом проекте используется PICO 4 (PICOA8110 / Phoenix) с панелью Sharp LS026B3SA (`ro.pvr.hmd.type=SHARP5K`) и драйвером Novatek NT57900** — это подтверждено хешами. Два пункта расходятся с моими замерами: (1) «Sharp умеет 120» описывает лишь способность панели сканировать быстрее, но в стоковом DTBO у неё только один тайминг 90 Гц, а 120-я последовательность NT57900 — 53-байтная заглушка; мои 120 Гц это разгон, поэтому сине-фиолетовая кайма и дымка на уровне DTBO не убираются; (2) узел `innolux_nt57900_90_video` в *том же* стоковом DTBO (те же 2160×2160, та же топология DSC, тот же NT57900) содержит **полную таблицу on-command для 72/90/120** (страница `ff`; адресное пространство отличается от Sharp-страницы `b9`, значения перенести нельзя) — поэтому подтвердить ограничение Innolux на 90 Гц я не могу. Установщик прерывается при `ro.pvr.hmd.type != SHARP5K`; панели не-Sharp не поддерживаются — вместо прошивки пришлите `ro.product.device`, `ro.build.id`, `ro.pvr.hmd.type`, `sys.pvr.display.type` и `sha256sum /dev/block/by-name/dtbo`.
+> **⚠️ Поставщики и характеристики панелей неодинаковы (сообщения сообщества, не мои замеры).** У некоторых P4 стоит Sharp-панель со спецификацией до 120 Гц; у некоторых P4 Pro — панель Innolux, ограниченная 90 Гц; есть утверждение, что в P4 встречается три вида панелей. **В этом проекте используется PICO 4 (PICOA8110 / Phoenix) с панелью Sharp LS026B3SA (`ro.pvr.hmd.type=SHARP5K`) и контроллером Novatek NT57900** — модель устройства, id панели, хеши стокового DTBO и библиотеки проверяются установщиком. Два пункта расходятся с моими замерами: (1) «Sharp умеет 120» описывает лишь способность панели сканировать быстрее, но в стоковом DTBO у неё только один тайминг 90 Гц, а `post-120-nt57900-on-command` — это 53-байтная дополнительная команда, а не полная конфигурация 120 Гц; мои 120 Гц — это разгон, поэтому сине-фиолетовая кайма и дымка на уровне DTBO не убираются. (2) Узел `innolux_nt57900_90_video` в *том же* стоковом DTBO (также 2160×2160 на глаз, та же топология DSC, тот же NT57900) содержит **полную таблицу on-command для 72/90/120** (страница `ff`; адресное пространство отличается от Sharp-страницы `b9`, значения перенести нельзя) — поэтому подтвердить ограничение Innolux на 90 Гц я не могу. Установщик прерывает установку при `ro.pvr.hmd.type != SHARP5K`; панели не-Sharp не поддерживаются — вместо прошивки пришлите `ro.product.device`, `ro.build.id`, `ro.pvr.hmd.type`, `sys.pvr.display.type` и `sha256sum /dev/block/by-name/dtbo`.
 
 ### Что я изменил
 
@@ -284,7 +284,7 @@ MIT License — see [LICENSE](LICENSE). For personal research only; back up and 
 | Обновление | Прямая установка поверх v1.0.0 / v1.1.0 |
 | Удаление | `uninstall.sh` восстанавливает штатный DTBO нужного варианта, чистит canary-конфиг, сбрасывает ConfigurationService и props |
 
-**Мои замеры (v1.2.0, без головы/desktop):** медиана `FrmGpu` **13–15 мс**, движок **~65–73 fps**, `VsyncDelay` 2–3; в v1.0.0 та же сцена давала ~27–30 мс / 30 fps.
+**Мои замеры (v1.2.0, гарнитура снята, сцена на рабочем столе):** медиана `FrmGpu` **13–15 мс**, движок **~65–73 fps**, `VsyncDelay` 2–3; в v1.0.0 та же сцена давала ~27–30 мс / 30 fps.
 
 ### Поддержка
 
@@ -308,11 +308,11 @@ MIT License — see [LICENSE](LICENSE). For personal research only; back up and 
 - определяет **CN / Phoenix_ovs** и выбирает соответствующие образы 120 и stock;
 - сохраняет штатный DTBO в `/sdcard/Download/pico4-dtbo-stock-backup.img`;
 - пишет 120 DTBO и проверяет чтением;
-- ставит патченный lib, конфиг 120, исправления буфера/защёлкивания и скрипт удаления.
+- устанавливает пропатченный lib, конфиг 120, исправления буфера глаза и защёлкивания, а также скрипт удаления.
 
 **Обновление с v1.0.0 / v1.1.0**
 
-Установите zip v1.2.0 поверх модуля и перезагрузитесь. Мой установщик принимает старый lib (`32427922…`) и старый DTBO (`f0c10d1d…`), не перезаписывает раздел и сохраняет штатный бэкап для удаления.
+Установите zip v1.2.1 поверх модуля и перезагрузитесь. Мой установщик принимает старый lib (`32427922…`) и старый DTBO (`f0c10d1d…`), не перезаписывает раздел и сохраняет штатный бэкап для удаления.
 
 **Удаление / возврат к stock**
 
@@ -336,25 +336,25 @@ adb shell getprop sys.pvr.display.type
 
 ### Известные ограничения
 
-1. **Сине-фиолетовая кайма по краям 2D-приложений остаётся.** Это предел аналоговой/зарядной калибровки панели на 120 Гц; `screencap` чистый. Ни один из моих DTBO-кандидатов (`b0both`, `panel-b0`, `vfp14`, `e5d5`) и переключателей CA это не исправил.
-2. **Остаётся лёгкая общая белесость/дымка.** Это базовая цена запуска гаммы/VCOM от 90 Гц на 120 Гц; она намного слабее раннего белого фильтра `e5d5` (тот был вызван ошибочной записью E5/D5 и откачен).
-3. **Не все приложения достигают 120 fps.** Развёртка 120 Гц, частота приложения ограничена GPU. Мой клэмп буфера глаза до 2160 сильно улучшает пейсинг, но тяжёлые сцены всё ещё могут быть ниже 72 fps.
+1. **Сине-фиолетовая кайма по краям 2D-приложений остаётся.** Это предел аналоговой/зарядной калибровки панели на 120 Гц; `screencap` чистый. Ни один из моих DTBO-кандидатов (`b0both`, `panel-b0`, `vfp14`, `e5d5`) и ни одна настройка коррекции цвета это не исправили.
+2. **Остаётся лёгкая общая бель/дымка.** Это неизбежная цена того, что профиль гаммы/VCOM, откалиброванный для 90 Гц, работает на 120 Гц; выражено намного слабее раннего белого фильтра `e5d5` (там была ошибочная запись E5/D5, образ откачен).
+3. **Не все приложения достигают 120 fps.** Развёртка идёт на 120 Гц, а частота приложения ограничена GPU. Ограничение буфера глаза до 2160 сильно улучшает равномерность кадров, но тяжёлые сцены всё ещё могут быть ниже 72 fps.
 4. **Другие международные базы (bee2b067) не поддерживаются.** CN и Phoenix_ovs (b9666) включены; неизвестная база безопасно прерывает установку, не трогая раздел.
 5. **Phoenix_ovs ещё не прошёл физическую регрессию.** Я собрал OVS 120 из официального пакета b9666 и офлайн проверил entry 6 и поддерево панели (побайтово совпадает с CN v6); в этом релизе я прогнал прошивку/обновление/удаление только на CN-устройстве. Для первой установки на OVS сохраните stock-бэкап.
 6. **Не переключайте частоту на лету.** Любое переключение DFPS с 120 даёт чёрный экран; мой модуль фиксирует 120.
 
-Если кайма/дымка неприемлемы, вернитесь на штатные 90 Гц; дальнейшие слепые записи регистров панели дают мало шансов.
+Если кайма и дымка неприемлемы, вернитесь на штатные 90 Гц; дальнейшие слепые записи в регистры панели не дают заметного выигрыша.
 
 ### Восстановление
 
-- **Чёрный экран / bootloader:** принудительная перезагрузка или выключение/включение; если Android загружается — удалите модуль через Magisk safe mode/App. Если застряли в bootloader — EDL (Vol Up + Vol Down + Power), прочитайте слот `dtbobak` через `edl-ng read-part`, проверьте stock-образ (`307e7021…`), затем `write-part dtbo`. Подробно: [RECOVERY.md](RECOVERY.md).
+- **Чёрный экран / bootloader:** принудительная перезагрузка или выключение/включение; если Android загружается — удалите модуль через Magisk safe mode/App. Если застряли в bootloader — EDL (Vol Up + Vol Down + Power), прочитайте слот `dtbobak` через `edl-ng read-part` и убедитесь, что образ весит **25 165 824 байт** и имеет SHA-256 `307e7021…` (CN) / `f4d6073c…` (Phoenix_ovs), затем `write-part dtbo`. Репозиторий не содержит `.img` (в `.gitignore`) — берите `dtbo-stock-cn.img` / `dtbo-stock-ovs.img` из архива модуля или официальный firmware; **не используйте `dtbo-stock-cn-5.13.7.img`** (8 МиБ, `ffd65209…`, неполный обрезанный дамп — с ним устройство не загрузится). Подробно: [RECOVERY.md](RECOVERY.md).
 - **Установщик abort — unknown DTBO baseline:** сначала восстановите официальный stock DTBO.
 - **Установщик abort — unsupported global:** эта база не входит в релиз; не форсируйте CN/OVS-образ.
 
 ### Правила безопасности
 
 - Образы разделов — только из **`edl-ng read-part`** или **официального firmware-пакета**; никогда не используйте `adb shell dd > hostfile`.
-- Перед записью `dtbo` проверьте размер **25 165 824 байт (24 MiB)** и SHA-256 после чтения.
+- Перед записью `dtbo` проверьте размер **25 165 824 байт (24 MiB)**; после записи перечитайте раздел и сверьте SHA-256.
 - Перед откатом прочитайте слот `dtbobak` этого устройства как эталон.
 - Не используйте `fastboot flash` для critical-разделов (нет unlocktoken).
 - Сохраняйте `/sdcard/Download/pico4-dtbo-stock-backup.img`.
