@@ -169,6 +169,10 @@ more-picohaxx 的方法：EDL 拉出 stock boot → Windows 上 magiskboot patch
 - [ ] 目标镜像大小 **== 25,165,824 字节（24 MiB 整）**，且 sha256 已记录。
 - [ ] 目标镜像来源可信：`edl-ng read-part` 或官方 firmware 包。
       **绝不能用 `adb shell dd > hostfile`**（会污染，见 §5）。
+- [ ] 只读取证例外：`adb exec-out` 不挂 pty、不做行转换，可以安全读分区——
+      `adb exec-out "su -c 'dd if=/dev/block/by-name/dtbo bs=1M'" > dtbo.img`。
+      2026-10-22 实测：得到 25,165,824 字节、sha256 与设备端 `sha256sum /dev/block/by-name/dtbo` 完全一致（`307e7021…`）。
+      仅用于**取回别人的原厂图做比对**；写回分区仍只走 EDL 或官方包。
 - [ ] 镜像头部 magic = `0xD7B7AB1E`，且能数出 16 个 FDT 块（`d00dfeed`）。
 - [ ] 目标镜像与设备**固件版本/region** 匹配（见下方「禁忌」）。
 - [ ] 回滚真值已就位：本地 `dtbo-stock-cn-24mb.img`（`307e7021…`），

@@ -235,10 +235,20 @@ pico4-display-analysis/*probe*
 
 ## 10. 标准验证流程
 
-1. 记录设备型号、PICO OS、面板标识、当前 DTBO 哈希和 vendor library 哈希，以及**当前生效的面板节点**。
-   生效节点目前**没有已验证的读法**（这正是 Issue #1 卡住的地方）。候选取证手段，需在报障机器上实测确认后再固化进安装器：
-   `dmesg | grep -iE "dsi|panel|entered rate"` 里驱动打出的节点名与速率、`getprop sys.pvr.display.type`、
-   `/sys/firmware/devicetree/base/`（含 `__symbols__`/overlay）里实际挂上的 `qcom,mdss_dsi_*` 子树。
+1. 记录设备型号、PICO OS、面板标识、当前 DTBO 哈希和 vendor library 哈希。2026-10-22 在一台 CN 原厂机（serial PA8110MGGB070328G，5.13.7 / b0c7315 之前的 stock 状态，全程只读）实测出的取证基线：
+
+   ```bash
+   adb shell "su -c 'cat /proc/cmdline'" | tr ' ' '\n' | grep dtbo_idx   # androidboot.dtbo_idx=5
+   adb shell "su -c 'sha256sum /dev/block/by-name/dtbo'"                 # 原厂 307e7021…
+   adb shell "su -c 'cat /sys/class/drm/card0-DSI-1/modes'"              # 4320x2160x90 / 4320x2160x72
+   adb shell getprop ro.pvr.hmd.type          # SHARP5K
+   adb shell getprop sys.pvr.display.type     # 72.000000
+   adb shell getprop persist.pvr.display.type # jdi49390
+   ```
+
+   **实测否定的读法**（别再试）：`/sys/firmware/devicetree/base/soc/qcom,mdss_mdp@ae00000/` 下 16 个 `qcom,mdss_dsi_*` 面板节点**全部都在**（overlay 全量合并），"某节点存在与否"判不出生效；这些节点**都没有 `status` 属性**；`dmesg` 降档后只剩 7 行 dsi、不含任何厂商名；`/sys/kernel/debug/dri/0/DSI-1/` 只有 `edid_override/fb_kmap/force/tx_cmd`，`state`、`debug` 里 grep 不到面板名；`card0-DSI-1` 也没有 `of_node` 链接。
+   ⇒ **运行时的 Android 读不出"这块屏是 Sharp 还是 Innolux"**。只能靠上面那组指纹做排除法，或把对方机器的原厂 DTBO 取回来逐字节比对（安全取法见 [RECOVERY.md](RECOVERY.md) 的 checklist）。
+   另一条值得记的旁证：原厂（未装模块）状态下 `persist.pvr.display.type = jdi49390`，而我们的模块写的是 `jdi493120` —— 厂商的速率配置 token 用的是 `jdi493xx` 命名，与 `ro.pvr.hmd.type=SHARP5K`、DT 节点名 `sharp_ls026b3sa` 是**三条互不等价的命名轴**。任何"看一个名字就断定面板"的做法都不可靠，这也是 §6 那个 hmd.type 假设至今不能仅凭属性名结案的原因。
 2. 确认原厂 DTBO 备份和回滚路径可用。
 3. 只使用哈希匹配的生产包，安装前保存日志。
 4. 重启后检查 DTBO 是否实际生效、`service.sh` 是否成功运行。
