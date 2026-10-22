@@ -22,12 +22,23 @@ from pathlib import Path
 
 MODULE_SRC = Path(__file__).resolve().parent
 ANALYSIS = MODULE_SRC.parent.parent / "pico4-display-analysis"
+
+
+def module_version() -> str:
+    for line in (MODULE_SRC / "module.prop").read_text(encoding="utf-8").splitlines():
+        if line.startswith("version="):
+            return line.split("=", 1)[1].strip()
+    raise SystemExit("module.prop has no version=")
+
+
 DTBO_CN = ANALYSIS / "dtbo-120hz-v6-init120.img"
 DTBO_OVS = ANALYSIS / "dtbo-120hz-v6-kona-mtp.img"
-DTBO_STOCK_CN = ANALYSIS / "recovery-edl" / "dtbo-stock-5.13.7.img"
+# Not "dtbo-stock-5.13.7.img": those 8 MiB files are truncated dumps. The stock CN
+# image verified against dtbobak is the full 24 MiB one (307e7021...).
+DTBO_STOCK_CN = ANALYSIS / "dtbo-stock-cn-24mb.img"
 DTBO_STOCK_OVS = ANALYSIS / "dtbo-stock-phoenix_ovs.img"
 LIB = ANALYSIS / "libpxrhmdservice.patched.so"
-OUT = ANALYSIS / "pico4-120hz-v1.2.0.zip"
+OUT = ANALYSIS / f"pico4-120hz-{module_version()}.zip"
 
 # must match the constants in customize.sh
 DTBO_CN_SHA256 = "f0c10d1dd04dd9a7c46b319758dbdd5f7540fe06aaf807377d23392c71aa20ea"
@@ -52,14 +63,17 @@ def add(zf: zipfile.ZipFile, arcname: str, src: Path, mode: int) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dtbo-cn", type=Path, default=DTBO_CN, help="120Hz image built from the CN stock dtbo")
+    parser.add_argument("--dtbo-ovs", type=Path, default=DTBO_OVS, help="120Hz image built from the Phoenix_ovs stock dtbo")
+    parser.add_argument("--stock-cn", type=Path, default=DTBO_STOCK_CN, help="verified CN stock dtbo image")
+    parser.add_argument("--stock-ovs", type=Path, default=DTBO_STOCK_OVS, help="verified Phoenix_ovs stock dtbo image")
     parser.add_argument("--out", type=Path, default=OUT, help="output zip path")
     args = parser.parse_args()
 
     for path, expected, label in (
         (args.dtbo_cn, DTBO_CN_SHA256, "CN 120Hz"),
-        (DTBO_OVS, DTBO_OVS_SHA256, "Phoenix_ovs 120Hz"),
-        (DTBO_STOCK_CN, DTBO_STOCK_CN_SHA256, "stock CN"),
-        (DTBO_STOCK_OVS, DTBO_STOCK_OVS_SHA256, "stock Phoenix_ovs"),
+        (args.dtbo_ovs, DTBO_OVS_SHA256, "Phoenix_ovs 120Hz"),
+        (args.stock_cn, DTBO_STOCK_CN_SHA256, "stock CN"),
+        (args.stock_ovs, DTBO_STOCK_OVS_SHA256, "stock Phoenix_ovs"),
     ):
         path = path.resolve()
         if not path.is_file():
@@ -88,9 +102,9 @@ def main() -> int:
         add(zf, "uninstall.sh", MODULE_SRC / "uninstall.sh", 0o755)
         add(zf, "system/etc/pvr/pxr_config.txt", MODULE_SRC / "system/etc/pvr/pxr_config.txt", 0o644)
         add(zf, "dtbo-cn.img", args.dtbo_cn.resolve(), 0o644)
-        add(zf, "dtbo-ovs.img", DTBO_OVS.resolve(), 0o644)
-        add(zf, "dtbo-stock-cn.img", DTBO_STOCK_CN.resolve(), 0o644)
-        add(zf, "dtbo-stock-ovs.img", DTBO_STOCK_OVS.resolve(), 0o644)
+        add(zf, "dtbo-ovs.img", args.dtbo_ovs.resolve(), 0o644)
+        add(zf, "dtbo-stock-cn.img", args.stock_cn.resolve(), 0o644)
+        add(zf, "dtbo-stock-ovs.img", args.stock_ovs.resolve(), 0o644)
         add(zf, "system/lib64/libpxrhmdservice.so", LIB, 0o644)
         meta = MODULE_SRC / "META-INF" / "com" / "google" / "android"
         add(zf, "META-INF/com/google/android/update-binary", meta / "update-binary", 0o755)

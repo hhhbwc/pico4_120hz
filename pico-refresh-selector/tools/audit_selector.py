@@ -82,8 +82,6 @@ REQUIRED_SERVICE = (
 
 REQUIRED_MODULE_PROP = (
     "id=pico4_120hz",
-    "versionCode=4",
-    "version=v1.2.0",
 )
 
 # Strings the running dex must carry (module identity + chosen-rate restore).
@@ -133,6 +131,17 @@ def audit_magisk_module(root: Path) -> None:
     module_prop = read(root / MAGISK_DIR / "module.prop")
     for required in REQUIRED_MODULE_PROP:
         require(required in module_prop, f"module.prop missing invariant: {required}")
+
+    # A pinned version string here is what let module.prop ship v1.2.0 while the
+    # installer banner and the published zip said v1.2.1 - compare them instead.
+    prop_ver = re.search(r"^version=(v[\d.]+)$", module_prop, re.M)
+    banner_ver = re.search(r"Pico4 120Hz Display Unlock (v[\d.]+)", customize)
+    require(prop_ver is not None and banner_ver is not None
+            and prop_ver.group(1) == banner_ver.group(1),
+            f"module.prop version and installer banner disagree: "
+            f"{prop_ver and prop_ver.group(1)} vs {banner_ver and banner_ver.group(1)}")
+    require(re.search(r"^versionCode=\d+$", module_prop, re.M) is not None,
+            "module.prop versionCode is missing or not numeric")
 
 
 def audit_apk(root: Path, apk: Path, expected_hash: str | None) -> None:

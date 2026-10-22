@@ -2,13 +2,14 @@
 
 **用途**：本文件是 `pico4_120hz` 项目的权威交接入口。内容只覆盖 PICO 4 物理 120Hz 解锁、验证、回滚和发布状态。
 
-**最后整理**：2026-10-20
+**最后整理**：2026-10-22
 
-> **2026-10-20 v1.2.0 发布更新**：v1.2.0 是当前发布版本，新增 **Phoenix_ovs（国际版 b9666）** 支持。
-> CN 真机回归已完成：stock → v1.1.0/v1.0.0 升级、stock 全新安装、uninstall → stock 恢复；
-> 当前设备已恢复官方 72Hz。OVS 120/stock 镜像已由官方 b9666 包构建并离线校验
-> （entry 6 补丁、面板子树与 CN v6 逐字节一致），但尚未在物理 OVS 机上做刷机回归。
-> 安装、升级、卸载和回滚见 [README.md](README.md) 与 [QUICKSTART.md](QUICKSTART.md)。
+> **2026-10-22 状态**：v1.2.1 是当前发布版本（tag `v1.2.1` = `b0c7315`，Release 资产 `pico4-120hz-v1.2.1.zip`，SHA-256 `60625150…`）。
+> 相对 v1.2.0 的两项变化：`service.sh` 与 Pico3dResolution 抢 `sdk_eyebuffer`（每 30s 压回 2160，V-Sleep 期间让位）；`service.d` 里的模块外开机回滚守卫，Magisk `remove` 或手删模块目录后首启自动恢复原厂 DTBO + 90Hz 配置。
+> CN 真机回归已完成：stock → v1.0.0/v1.1.0 升级、stock 全新安装、uninstall → stock 恢复；
+> **OVS 仍未做物理机回归**（镜像离线校验通过）。安装、升级、卸载和回滚见 [README.md](README.md) 与 [QUICKSTART.md](QUICKSTART.md)。
+>
+> **发布可复现性缺口（未解）**：本机已无 Phoenix_ovs 的两张镜像（120 的 `dtbo-120hz-v6-kona-mtp.img` = `d138d5d6…`、stock 的 `dtbo-stock-phoenix_ovs.img` = `f4d6073c…`），所以 `build_zip.py` 现在只能跑到 CN 路径就报缺图；已给它加 `--dtbo-ovs / --stock-cn / --stock-ovs` 参数，在有图的重打包机上可直接指过去。`module.prop` 此前停在 v1.2.0/4（发布包里已是 v1.2.1/5），已对齐，`build_zip.py` 的产物名改为从 `module.prop` 读取，`audit_selector.py` 不再钉死版本串、改为比对安装器横幅与 `module.prop`。
 
 ## 1. 当前结论
 
@@ -18,8 +19,9 @@
 - v1.0.1：未单独发布；固件门、一次性 resync 等修复已并入 v1.1.0。
 - v1.1.0：已发布。眼缓冲 2816→2160、`xrMiniVsyncBackStep=4`、120Hz SDK 校准、
   CN 升级/卸载支持和 stock 回滚镜像已完成 CN 真机回归。
-- v1.2.0：当前发布版本。新增 CN + Phoenix_ovs 统一安装包，按 stock DTBO 自动选图；
+- v1.2.0：新增 CN + Phoenix_ovs 统一安装包，按 stock DTBO 自动选图；
   CN 路径已完成真机回归，OVS 镜像离线校验通过、物理机回归待做。
+- v1.2.1：**当前发布版本**。Res3D 眼缓冲夹取（每 30s 压回 2160）+ 模块外开机回滚守卫（Magisk `remove` 后首启恢复原厂 DTBO + 90Hz）；CN 真机回归同上，OVS 仍未物理机回归。
 - 发布前最后一步：提交/推送并打 tag（见 §11）。
 - PICO OS 5.13.8 及后续 OTA 存在 root 和恢复能力风险，**不要点系统更新**。
 
@@ -41,17 +43,18 @@ VD 的 PMS 修复、转区、dock 恢复和汉化都只是设备环境背景，�
 
 ## 3. Git 与发布状态
 
-2026-10-20 v1.2.0 发布更新（已提交并推送）：
+2026-10-22 复核（用 `git ls-remote` 与 `git tag` 实测，不是记忆）：
 
 ```text
-基线：origin/main = 0b081c0
-发布分支：release/v1.2.0
-代码提交：f144397（v1.2.0）
-状态：已推送；PR/Release 进行中
+origin/main：包含 v1.2.1 全部内容（tag v1.2.1 → b0c7315，2026-10-20）
+远端分支：只有 refs/heads/main —— 早期记录里的 release/v1.2.0 分支不在远端
+本地 main：曾停在 2136057（b0c7315 的祖先，docs 提交），已快进对齐
 ```
 
-本地 `main` 另有 2 个仅本地提交（`5ab2040` GPU 源码包、`731f776` GPU 监控脚本），
-未合入本分支，也不属于 120Hz 发布物。
+历史上下文（保留以便理解旧提交）：v1.2.0 当时记为 `origin/main = 0b081c0`（该提交确实在 main 历史里，可验证），
+发布分支 `release/v1.2.0`、代码提交 `f144397`。后两者在本仓库里**没有对应对象**
+（`git cat-file -e f144397` 失败），只能当作当时那台机器上的过程记录；tag 才是可靠锚点。
+同理，旧版本地提交 `5ab2040` / `731f776`（GPU 源码包与监控脚本）也不在本仓库中。
 
 `ca45115` 的固件门判据错误（用 `ro.build.version.incremental` 匹配 `5.13.7*`，
 而该属性在所有 5.13.7 设备上都是 `smartcm.<时间戳>`，导致 100% abort），
@@ -111,14 +114,20 @@ SurfaceFlinger 的模式列表、PICO 属性或官方帧率显示都不能单独
 | runtime `pxr_config.txt`（backstep 4） | `95937d0b24c83335d5d79bf782f67f2be8e760c789a40cd116b9fafc40f59125` |
 | v1.1.0 ZIP（CN） | `3a7590ddcf12f1c03fed10a077dad206e23826073298c2888a431ad48836c9be` |
 | v1.2.0 ZIP（CN + Phoenix_ovs） | `f9b6f1df5495b8f1f31ab47cdb4543e5cbada6e6f4e0986a3ecfb7b25a1b3222` |
+| v1.2.1 ZIP（CN + Phoenix_ovs，当前 Release 资产） | `606251502c0bc875c3f02e30f2e8a3758b9991479b9f397ee2c8e505d94371f3` |
 | 已验证 v1.0.0 ZIP | `af0ce5db6496a416d8fb74b7c2d4c685f3364a185ee86252163f6ba669804b6a` |
 | v6 init120 DTBO（= v1.0.0 / v1.1.0 内置 120 镜像） | `f0c10d1dd04dd9a7c46b319758dbdd5f7540fe06aaf807377d23392c71aa20ea` |
 | 旧本地 v1.0.1 ZIP（历史，文件已不存在） | `ce38dc233fa1ccb9a10d545a37ad475dcc7005a9f4eac0ae38c9d357c870e401` |
 
 任何发布前重打包都要重新记录哈希，并确认产物对应干净提交。
-v1.2.0 同时打包 CN 与 Phoenix_ovs：OVS stock 来自官方 b9666 包
+v1.2.0 起同时打包 CN 与 Phoenix_ovs：OVS stock 来自官方 b9666 包
 （`f4d6073c…`），entry-6 120 镜像由 `build_120_ovs.py` 生成（`d138d5d6…`）。
 其他 global 基线（`bee2b067…` / `0ab8b8…`）仍不在包内，安装器会安全 abort。
+
+版本自证（2026-10-22 补齐）：`module.prop` = `v1.2.1` / `versionCode=5`，与 `customize.sh`
+横幅和 Release 资产名一致；`build_zip.py` 的产物名从 `module.prop` 解析，`audit_selector.py`
+比对 `module.prop` 与横幅而不是钉死字面串。此前 v1.2.1 发布时只改了打包侧，仓库里仍是
+v1.2.0/4，所以按旧脚本重打包会打出与实际发布不符的包。
 
 ## 6. 设备与固件范围
 
@@ -127,10 +136,14 @@ v1.2.0 同时打包 CN 与 Phoenix_ovs：OVS stock 来自官方 b9666 包
 ```text
 型号：PICO 4 / PICOA8110 / Phoenix
 系统：PICO OS 5.13.7 / Android 10
-面板：Sharp LS026B3SA
+面板：Sharp LS026B3SA（节点 qcom,mdss_dsi_sharp_ls026b3sa_90_video，4320×2160 = 单眼 2160×2160）
 面板标识：SHARP5K
+驱动 IC：Novatek NT57900（本机走 `b9` 页方言）
 SoC：Snapdragon 865
 ```
+
+**面板供应商不统一（社区反馈，已写进 README 开头）**：有人的 P4 是 Sharp 且规格标称可到 120Hz，有人的 P4 Pro 是 Innolux 只能 90Hz，还有人说 P4 有三种面板。我们的 DT 证据只支持"本机的 LS026B3SA 原厂只有 90Hz 一档"，而同一份原厂 DTBO 里 `innolux_nt57900_90_video` 反而带 72/90/120 三档 on-command 查表（`ff` 页，与 `b9` 页地址空间不同、值不可互搬）。
+**未验证的风险**：`ro.pvr.hmd.type` 可能是 SKU 级属性而非逐面板批次。若 Sharp 与 Innolux 批次共用同一份 DTBO（靠硬件 strap 选生效节点），那么"hmd.type=SHARP5K"不足以证明当前生效的是 ls026b3sa 子树，安装器闸门可能放行一台实际跑 Innolux 节点的机器——表现正是"装成功但仍 90Hz/底边花屏"（Issue #1 的形态）。判定方法见 §10 第 1 步的生效节点取证。
 
 v1.0.1 的固件门允许 `5.13.7*` 的多个增量，但这不等于支持所有变体。DTBO、面板和原版 vendor library 仍必须命中严格的白名单哈希；哈希不匹配应安全中止。
 
@@ -173,7 +186,9 @@ v1.0.1 的固件门允许 `5.13.7*` 的多个增量，但这不等于支持所�
 pico-refresh-selector/magisk-module/
 pico-refresh-selector/magisk-module/build_zip.py
 pico4-display-analysis/build_120_ovs.py
-# 产物 pico4-display-analysis/pico4-120hz-v1.2.0.zip 不入库，按需构建
+# 产物 pico4-display-analysis/pico4-120hz-v1.2.1.zip 不入库，按需构建
+# 本机缺 dtbo-120hz-v6-kona-mtp.img(d138d5d6) 与 dtbo-stock-phoenix_ovs.img(f4d6073c)，
+# 所以 build_zip.py 只能验到 CN 路径；有这两张图的机器用 --dtbo-ovs / --stock-ovs 指过去
 ```
 
 ### 物理验证
@@ -209,7 +224,10 @@ pico4-display-analysis/*probe*
 
 ## 10. 标准验证流程
 
-1. 记录设备型号、PICO OS、面板标识、当前 DTBO 哈希和 vendor library 哈希。
+1. 记录设备型号、PICO OS、面板标识、当前 DTBO 哈希和 vendor library 哈希，以及**当前生效的面板节点**。
+   生效节点目前**没有已验证的读法**（这正是 Issue #1 卡住的地方）。候选取证手段，需在报障机器上实测确认后再固化进安装器：
+   `dmesg | grep -iE "dsi|panel|entered rate"` 里驱动打出的节点名与速率、`getprop sys.pvr.display.type`、
+   `/sys/firmware/devicetree/base/`（含 `__symbols__`/overlay）里实际挂上的 `qcom,mdss_dsi_*` 子树。
 2. 确认原厂 DTBO 备份和回滚路径可用。
 3. 只使用哈希匹配的生产包，安装前保存日志。
 4. 重启后检查 DTBO 是否实际生效、`service.sh` 是否成功运行。
@@ -219,6 +237,9 @@ pico4-display-analysis/*probe*
 8. 测试失败时立即恢复干净状态，再分析日志；不要在故障状态继续叠加 VD、PMS 或其他模块。
 
 ## 11. v1.0.1 发布前清单
+
+> 本节是 v1.0.1 / v1.1.0 时期的过程记录。v1.2.1 已发布（2026-10-20），未勾选项不代表当前仍阻塞；
+> 其中"提交、推送并创建 Release"一类步骤已在后续版本完成。保留原文只为追溯判据来源。
 
 - [x] 审核并提交 v1.0.1 改动，形成干净、可追溯提交（含固件门改用 `ro.build.id`）。
 - [x] 统一 README、中文/英文/俄文和脚本中“一次性重同步”的描述。
@@ -252,6 +273,9 @@ pico4-display-analysis/*probe*
 **实测当前运行在 PICO 出厂默认档 72 Hz**（`supportedModes` = 90/72，
 `defaultModeId=2`；dmesg `dsi_bridge_enable entered rate:72`）——
 原厂并非默认 90 Hz，90 Hz 是系统设置里的可选档。
+
+> 上面两处"当前"是 2026-10-19 那次回滚验证的快照，不是现状。v1.2.0/v1.2.1 发布后 CN 机已重新刷回 120Hz DTBO 并启用模块；
+> 卸载（Magisk `remove` 或模块外开机守卫）才回到原厂 DTBO + 90Hz 配置，出厂默认档仍是 72Hz。
 
 若将来要「既要 120 Hz 又要干净画质」，需要的是面板级 120 Hz 初始化序列
 （LS026B3SA 真实 TCON 序列，目前无厂商参考），而不是继续改 DTBO 时序或 PHY。
