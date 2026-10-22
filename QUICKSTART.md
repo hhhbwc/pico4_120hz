@@ -112,7 +112,7 @@ adb shell getprop sys.pvr.display.type
 - 确认模块启用并重启过；
 - 确认固件/面板匹配；
 - 确认没有其他模块同时改 `dtbo`/`libpxrhmdservice.so`；
-- 看 Magisk 安装日志和 `logcat | grep pico4_120hz`。
+- 看 Magisk 安装日志和 `logcat | grep pico4_120hz`；日志开头的 `pico4_120hz fingerprint …` 整段一起贴出来最有用了（`main` 分支已加，v1.2.1 zip 里还没有，可自己跑 README 里那几条命令取）。
 
 ---
 

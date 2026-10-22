@@ -10,6 +10,23 @@ ui_print "======================================"
 ui_print "  Pico4 120Hz Display Unlock v1.2.1"
 ui_print "======================================"
 
+# Display fingerprint, printed before any gate can abort so a failed install log
+# is self-explanatory. The panel supplier is NOT derivable at runtime (all 16
+# qcom,mdss_dsi_* nodes live in the merged tree, none carries a status property,
+# and the kernel log names no vendor), so this is the strongest identity set
+# available. Every read is failure-tolerant: a missing file just prints empty.
+tb() { /system/bin/toybox "$@" 2>/dev/null; }
+pico_fp() { ui_print "pico4_120hz fingerprint $1=$2"; }
+pico_fp "ro.product.device" "$(getprop ro.product.device)"
+pico_fp "ro.build.id" "$(getprop ro.build.id)"
+pico_fp "ro.pvr.hmd.type" "$(getprop ro.pvr.hmd.type)"
+pico_fp "sys.pvr.display.type" "$(getprop sys.pvr.display.type)"
+pico_fp "persist.pvr.display.type" "$(getprop persist.pvr.display.type)"
+pico_fp "dtbo_idx" "$([ -r /proc/cmdline ] && tb tr ' ' '\n' < /proc/cmdline | tb grep -m1 dtbo_idx)"
+pico_fp "dtbo_sha16" "$(tb sha256sum -b /dev/block/by-name/dtbo | tb cut -c1-16)"
+pico_fp "modes" "$([ -r /sys/class/drm/card0-DSI-1/modes ] && tb tr '\n' ';' < /sys/class/drm/card0-DSI-1/modes)"
+pico_fp "lib_sha16" "$(tb sha256sum -b /system/lib64/libpxrhmdservice.so | tb cut -c1-16)"
+
 # Firmware gate, component-wise. 5.13.7 ships under several device-tree
 # variants (Phoenix, Phoenix_ovs) and build incrementals (smartcm.*); the
 # v1.0.0 whole-fingerprint match rejected all of those (issue #2). The OS

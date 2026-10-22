@@ -40,6 +40,7 @@ FORBIDDEN_HOOK = (
 
 # Firmware gate must be component-wise, never a whole-fingerprint match.
 REQUIRED_CUSTOMIZE = (
+    "pico4_120hz fingerprint",  # pre-gate display fingerprint (issue #1 forensics)
     '"$(getprop ro.product.device)" != "PICOA8110"',
     "5.13.7*",
     '"$(getprop ro.pvr.hmd.type)" != "SHARP5K"',
